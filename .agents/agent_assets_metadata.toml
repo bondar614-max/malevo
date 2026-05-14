@@ -1,0 +1,134 @@
+uploads = []
+outputs = []
+
+[[generated]]
+id = "xD82zZC0VmlsaSFUwN2XM"
+uri = "file://artifacts/web/src/assets/hero/business.png"
+type = "image"
+title = "Business headshot"
+
+[[generated]]
+id = "Ka-Ukuy7EOtcLt_aCAPrW"
+uri = "file://artifacts/web/src/assets/hero/anime.png"
+type = "image"
+title = "Anime character"
+
+[[generated]]
+id = "NleI74bmhXF4-Wgt-5UrE"
+uri = "file://artifacts/web/src/assets/hero/fantasy.png"
+type = "image"
+title = "Fantasy warrior"
+
+[[generated]]
+id = "l4UAGpNfTNIj4aqpndjIp"
+uri = "file://artifacts/web/src/assets/hero/art.png"
+type = "image"
+title = "Abstract art portrait"
+
+[[generated]]
+id = "OFw4x260jQP-P1GCEIqKi"
+uri = "file://attached_assets/generated_images/professional_business_portrait_of_de94.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "JGLfHGb84-xeOm1vCBHhx"
+uri = "file://attached_assets/generated_images/anime_style_portrait_illustration_b688.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "syz_qUqPqi3Cl21GoqCr_"
+uri = "file://attached_assets/generated_images/epic_fantasy_warrior_portrait_55d2.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "q8AR7trIB0CNPp9nW2Xly"
+uri = "file://attached_assets/generated_images/editorial_fashion_portrait_of_0f8f.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "KMO5DmcEpmHgkff_1ldGY"
+uri = "file://attached_assets/generated_images/abstract_artistic_portrait_expressive_95c5.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "uAzuaivMAqvVj4EPJUJXD"
+uri = "file://attached_assets/generated_images/cyberpunk_neon_portrait_of_89d3.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "bZ9DzgbF3w918QPwgZLYi"
+uri = "file://attached_assets/generated_images/confident_business_headshot_in_f160.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "kiCfTqLA_eu4aOn55mX4g"
+uri = "file://attached_assets/generated_images/anime_character_with_colorful_acc1.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "C7vB9SzFJ-IhFUNmwTqB6"
+uri = "file://attached_assets/generated_images/fantasy_elven_warrior_in_e1c8.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "VjfASlqMwYieP3w1JFjui"
+uri = "file://attached_assets/generated_images/editorial_fashion_portrait_dramatic_1361.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "UKETVk1djNC3vIyij8AQR"
+uri = "file://attached_assets/generated_images/abstract_painted_portrait_vivid_159b.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "mfdDmOkNgkVi5sOsTJCpH"
+uri = "file://attached_assets/generated_images/cyberpunk_neon_portrait_with_b6ba.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "twJPx-7cUf1RWv30nZX1W"
+uri = "file://attached_assets/generated_images/renaissance_oil_painting_style_2fff.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "WY3q3SB1A3XrMyn3AID6b"
+uri = "file://attached_assets/generated_images/anime_warrior_with_sword_b731.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "J2KjxyKNalC-xWoGUYhFm"
+uri = "file://attached_assets/generated_images/vintage_film_photo_portrait_76a2.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "KMEeok0lxVcAmHhLZDhNi"
+uri = "file://attached_assets/generated_images/futuristic_ai_generated_avatar_b78f.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "R4-PyGvdW10AV05hrntEZ"
+uri = "file://attached_assets/generated_images/watercolor_portrait_painting_soft_1854.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "hzbyxCNGV8P5jsEGFCCh5"
+uri = "file://attached_assets/generated_images/dark_moody_portrait_with_abf8.png"
+type = "image"
+title = "generated_image"

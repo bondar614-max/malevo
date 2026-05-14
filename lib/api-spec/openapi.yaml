@@ -3,20 +3,27 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: PhotoGen AI API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: styles
+    description: AI generation styles
+  - name: auth
+    description: Authentication
+  - name: stats
+    description: Aggregated stats
+  - name: reviews
+    description: Customer reviews
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +31,181 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /styles:
+    get:
+      operationId: listStyles
+      tags: [styles]
+      summary: List active styles
+      parameters:
+        - name: category
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Style"
+
+  /styles/{id}:
+    get:
+      operationId: getStyle
+      tags: [styles]
+      summary: Get style by id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Style"
+        "404":
+          description: Not found
+
+  /stats/summary:
+    get:
+      operationId: getStatsSummary
+      tags: [stats]
+      summary: Aggregated platform stats for hero/landing badges
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatsSummary"
+
+  /styles/categories:
+    get:
+      operationId: listCategories
+      tags: [styles]
+      summary: List style categories with counts
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CategoryCount"
+
+  /styles/trending:
+    get:
+      operationId: listTrendingStyles
+      tags: [styles]
+      summary: Trending styles by orders_count
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Style"
+
+  /gallery:
+    get:
+      operationId: listGallery
+      tags: [styles]
+      summary: Curated gallery of result images for marquee
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GalleryItem"
+
+  /reviews:
+    get:
+      operationId: listReviews
+      tags: [reviews]
+      summary: Customer reviews
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Review"
+
+  /auth/register:
+    post:
+      operationId: register
+      tags: [auth]
+      summary: Register a new account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Bad request
+        "409":
+          description: Email already registered
+
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Invalid credentials
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Current user
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Unauthorized
+
 components:
   schemas:
     HealthStatus:
@@ -31,6 +213,105 @@ components:
       properties:
         status:
           type: string
-      required:
-        - status
+      required: [status]
 
+    Style:
+      type: object
+      required:
+        - id
+        - title
+        - shortDescription
+        - previewImageUrl
+        - exampleImages
+        - price
+        - generationTime
+        - ordersCount
+        - category
+      properties:
+        id: { type: string }
+        title: { type: string }
+        shortDescription: { type: string }
+        fullDescription: { type: string }
+        previewImageUrl: { type: string }
+        exampleImages:
+          type: array
+          items: { type: string }
+        price: { type: number }
+        generationTime: { type: integer }
+        ordersCount: { type: integer }
+        category: { type: string }
+        rating: { type: number }
+
+    GalleryItem:
+      type: object
+      required: [id, imageUrl, styleTitle, styleId]
+      properties:
+        id: { type: string }
+        imageUrl: { type: string }
+        styleTitle: { type: string }
+        styleId: { type: string }
+
+    CategoryCount:
+      type: object
+      required: [category, count]
+      properties:
+        category: { type: string }
+        count: { type: integer }
+
+    StatsSummary:
+      type: object
+      required:
+        - totalStyles
+        - totalGenerated
+        - averageRating
+        - averageGenerationTime
+      properties:
+        totalStyles: { type: integer }
+        totalGenerated: { type: integer }
+        averageRating: { type: number }
+        averageGenerationTime: { type: integer }
+
+    Review:
+      type: object
+      required: [id, name, rating, text, styleTag, createdAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        avatarColor: { type: string }
+        rating: { type: integer }
+        text: { type: string }
+        styleTag: { type: string }
+        createdAt: { type: string }
+
+    User:
+      type: object
+      required: [id, email]
+      properties:
+        id: { type: string }
+        email: { type: string }
+        name: { type: string }
+        role: { type: string }
+        createdAt: { type: string }
+
+    AuthResponse:
+      type: object
+      required: [token, user]
+      properties:
+        token: { type: string }
+        user:
+          $ref: "#/components/schemas/User"
+
+    RegisterInput:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string }
+        name: { type: string }
+        password: { type: string, minLength: 6 }
+
+    LoginInput:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string }
+        password: { type: string }

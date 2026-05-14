@@ -1,0 +1,241 @@
+Build a full-stack AI photo generation service landing page. Use React 18 + Vite for frontend, Node.js + Express for backend, and PostgreSQL for the database.
+
+=== TECH STACK ===
+- Frontend: React 18, Vite, TailwindCSS, Framer Motion, React Router v6, Axios
+- Backend: Node.js, Express, Multer, JWT, bcrypt, Sequelize ORM
+- Database: PostgreSQL
+- Image storage: Cloudinary (use environment variables for keys)
+
+=== COLOR SCHEME & DESIGN ===
+Dark theme only:
+- bg-primary: #09090B
+- bg-secondary: #18181B
+- border: rgba(255,255,255,0.08)
+- accent: #7C3AED
+- accent-pink: #EC4899
+- gradient: linear-gradient(135deg, #7C3AED, #EC4899)
+- text-primary: #FAFAFA
+- text-secondary: #A1A1AA
+
+Font: Inter (import from Google Fonts)
+Border radius for cards: 16px
+All animations via Framer Motion
+
+=== DATABASE SCHEMA ===
+
+Create the following PostgreSQL tables using Sequelize:
+
+1. Table: styles
+- id: UUID, primary key
+- title: VARCHAR(255), not null
+- short_description: TEXT
+- full_description: TEXT
+- prompt: TEXT
+- negative_prompt: TEXT
+- price: DECIMAL(10,2)
+- preview_image_url: VARCHAR(500)
+- example_images: JSONB (array of image URLs, minimum 3)
+- generation_time: INTEGER (seconds)
+- is_active: BOOLEAN, default true
+- sort_order: INTEGER, default 0
+- orders_count: INTEGER, default 0
+- category: VARCHAR(100) (e.g. 'Портрет', 'Арт', 'Бизнес', 'Фэнтези', 'Аниме')
+- created_at: TIMESTAMP
+
+2. Table: users
+- id: UUID, primary key
+- email: VARCHAR(255), unique, not null
+- name: VARCHAR(255)
+- password_hash: VARCHAR(255)
+- role: VARCHAR(50), default 'user'
+- is_blocked: BOOLEAN, default false
+- created_at: TIMESTAMP
+- last_login: TIMESTAMP
+
+3. Table: orders
+- id: UUID, primary key
+- user_id: UUID, references users(id)
+- style_id: UUID, references styles(id)
+- status: VARCHAR(50) (values: 'pending', 'paid', 'processing', 'completed', 'failed')
+- amount: DECIMAL(10,2)
+- source_photo_url: VARCHAR(500)
+- result_photos: JSONB
+- payment_id: VARCHAR(255)
+- error_message: TEXT
+- created_at: TIMESTAMP
+- completed_at: TIMESTAMP
+
+Seed the database with 6 sample styles with realistic Russian titles, descriptions and placeholder Cloudinary image URLs.
+
+=== BACKEND API ===
+
+Create the following REST API endpoints:
+
+GET /api/styles — return all active styles (is_active=true), ordered by sort_order. Each style object must include: id, title, short_description, preview_image_url, example_images, price, generation_time, orders_count, category
+GET /api/styles/:id — return single style by id with all fields
+POST /api/auth/register — register user (email, name, password), return JWT token
+POST /api/auth/login — login user, update last_login, return JWT token
+GET /api/auth/me — return current user data (requires JWT)
+
+=== FRONTEND STRUCTURE ===
+
+Create the following file structure:
+src/
+  components/
+    layout/
+      Header.jsx
+      Footer.jsx
+    sections/
+      HeroSection.jsx
+      HowItWorksSection.jsx
+      StylesGrid.jsx
+      GallerySection.jsx
+      ReviewsSection.jsx
+    ui/
+      StyleCard.jsx
+      QuickViewModal.jsx
+      SkeletonCard.jsx
+      FilterPills.jsx
+  pages/
+    HomePage.jsx
+  hooks/
+    useStyles.js
+  api/
+    stylesApi.js
+  App.jsx
+  main.jsx
+
+=== PAGE SECTIONS — BUILD ALL OF THESE ===
+
+--- 1. HEADER ---
+- Fixed/sticky header with blur backdrop: backdrop-filter: blur(12px), background: rgba(9,9,11,0.85)
+- Left: Logo with gradient icon (SVG lightning bolt or sparkles) + text "PhotoGen AI"
+- Center navigation links: "Главная", "Как работает", "Стили", "Цены" — all smooth scroll to anchor sections on the page
+- Right side: ghost "Войти" button (border: 1px solid rgba(255,255,255,0.15)) and gradient "Попробовать →" button
+- On mobile (< 768px): hamburger menu icon, clicking it opens a full-width drawer from the right with all nav links and both buttons
+- Animate header background: transparent when at top of page, dark with blur when scrolled down (use scroll event listener)
+
+--- 2. HERO SECTION ---
+- Full viewport height (min-h-screen), dark background with 2 large blurred gradient orbs (purple and pink, position: absolute, z-index: 0, opacity: 0.15, filter: blur(120px))
+- Left side (60% width on desktop):
+  * Badge at top: pill shape, gradient border, text "✨ AI-генерация нового поколения"
+  * H1 heading: "Создай свою AI-фотографию за 60 секунд" — large 56px text, last word "секунд" in gradient color
+  * Subtitle paragraph: "Загрузи своё фото и получи профессиональные снимки в любом стиле. Без навыков фотографии и фотошопа."
+  * Two buttons in a row: 1) Primary large gradient button "🚀 Попробовать бесплатно" with glow box-shadow on hover, 2) Ghost button "▶ Смотреть примеры" — clicking it smooth-scrolls to StylesGrid section
+  * Trust bar below buttons: 3 items separated by dots: "✓ Без навыков", "✓ Результат за 60 сек", "✓ 4 фото в подарок"
+- Right side (40% width on desktop): 2x2 grid of 4 placeholder images (use https://picsum.photos/300/400?random=1 through ?random=4), each with a colored badge overlay in bottom-left corner ("Бизнес", "Аниме", "Фэнтези", "Арт"), images have border-radius: 12px
+- Framer Motion animations: left side fades in from left (x: -40), right side images appear with stagger (each image 100ms delay), badge bounces in
+
+--- 3. HOW IT WORKS SECTION ---
+- Section id="how-it-works", padding: 80px 0
+- Centered heading: "Как это работает?" with subtitle
+- 3 cards in a row (column on mobile), each card:
+  * Large emoji icon in a gradient circle background (64px): 📤 / 🎨 / ✨
+  * Step number badge: "01", "02", "03" in top-right corner of icon
+  * Title: "Загрузи фото" / "Выбери стиль" / "Получи результат"
+  * Description: 2–3 sentences explaining the step
+  * Card background: bg-secondary (#18181B), border: 1px solid rgba(255,255,255,0.08), border-radius: 16px
+- SVG arrow connector between cards (visible only on desktop), gradient colored
+- Animate with Framer Motion: cards appear from bottom (y: 40) with stagger when scrolled into view (use whileInView)
+
+--- 4. STYLES GRID SECTION (MAIN SECTION) ---
+- Section id="styles", padding: 80px 0
+- Centered heading: "Выбери свой стиль" with subtitle "Более 10 уникальных стилей AI-генерации"
+- Category filter pills row: ["Все", "Портрет", "Арт", "Бизнес", "Фэнтези", "Аниме"]
+  * Pill style: rounded-full, border, padding: 8px 20px
+  * Active pill: gradient background, no border
+  * Clicking a pill filters the displayed cards with Framer Motion layout animation
+- Styles grid: 3 columns on desktop (1280px+), 2 columns on tablet (768px+), 1 column on mobile
+- Gap: 24px between cards
+- While loading from API: show 6 SkeletonCard components (animated pulse effect, same card dimensions)
+
+Each StyleCard must contain:
+  * Image container (aspect-ratio: 4/5): preview_image_url as background-image, object-fit: cover, border-radius: 16px 16px 0 0
+  * On image hover: dark overlay appears with a "🔍 Быстрый просмотр" button centered — clicking this opens QuickViewModal
+  * Category badge on top-left of image: small pill, semi-transparent dark background, white text
+  * Card body (padding: 20px):
+    - Title: 18px, font-weight: 600, white
+    - Short description: 14px, text-secondary (#A1A1AA), max 2 lines with text-overflow ellipsis
+    - Stats row: "⭐ 4.9" on left, "👤 {orders_count} фото" on right, both 13px text-secondary
+    - Price row: "от {price} ₽" in gradient text color, font-size: 20px, font-weight: 700
+    - CTA button: full width, gradient background (135deg, #7C3AED, #EC4899), text "🚀 Сгенерировать", border-radius: 10px, padding: 12px
+    - Button hover: scale(1.02), increased glow shadow
+  * Card hover effect: translateY(-8px), border color rgba(124,58,237,0.5), box-shadow: 0 20px 40px rgba(124,58,237,0.15)
+  * All transitions: 200–300ms ease
+  * Clicking "Сгенерировать" button navigates to /generate/:id (React Router)
+
+QuickViewModal component:
+  * Triggered by "Быстрый просмотр" overlay button on card image
+  * Full-screen overlay: rgba(0,0,0,0.8), backdrop-blur
+  * Modal box: max-width 800px, bg-secondary, border-radius: 20px, padding: 32px
+  * Left side: image slider showing example_images (3–4 images), with prev/next arrow buttons
+  * Right side: style title, full_description, price, generation time, "Сгенерировать" button (navigates to /generate/:id)
+  * Close button (X) in top-right corner
+  * Framer Motion: modal scales in (scale: 0.9 → 1) with opacity fade
+
+--- 5. GALLERY SECTION ---
+- Section id="gallery", padding: 80px 0, background: slightly lighter than main bg (#0F0F13)
+- Centered heading: "Результаты наших пользователей"
+- Two rows of images in infinite auto-scrolling marquee animation:
+  * Row 1 scrolls left continuously
+  * Row 2 scrolls right continuously
+  * Each row: 8 images (use picsum.photos with different random seeds), square format (240x240px), border-radius: 12px, gap: 16px
+  * On hover: pause animation, show overlay with style name and "Попробовать →" button
+  * Smooth infinite loop using CSS animation or Framer Motion
+- Below marquee: centered "Смотреть все работы" ghost button
+
+--- 6. REVIEWS SECTION ---
+- Section id="reviews", padding: 80px 0
+- Centered heading: "Что говорят пользователи" with star rating summary: "⭐ 4.9 из 5 на основе 2 400+ отзывов"
+- Carousel showing 3 review cards on desktop, 1 on mobile
+- Each review card (hardcoded, 6 total reviews):
+  * Avatar: colored circle with initials (no real photos needed)
+  * Name and date
+  * Star rating: 5 gold stars (★★★★★)
+  * Review text: 2–4 sentences in Russian, realistic
+  * Style tag at bottom: "Стиль: Бизнес-портрет" etc.
+  * Card: bg-secondary, border, border-radius: 16px, padding: 24px
+- Navigation: left/right arrow buttons + dot indicators below
+- Auto-advance every 4 seconds, pause on hover
+- Framer Motion slide transition between sets
+
+--- 7. FOOTER ---
+- Background: #000000 or very dark
+- Top section: 4 columns
+  * Col 1: Logo + tagline "AI фотографии за 60 секунд" + social links (Telegram, VK icons as SVG)
+  * Col 2: "Сервис" links: Стили, Цены, API, Партнёрам
+  * Col 3: "Информация" links: О нас, FAQ, Блог, Отзывы
+  * Col 4: "Контакты": TG: @photogenai, Email: hello@photogen.ai
+- Divider line: rgba(255,255,255,0.08)
+- Bottom row: "© 2026 PhotoGen AI. Все права защищены." on left, "Политика конфиденциальности" and "Публичная оферта" links on right
+- All link hover: gradient text color
+
+=== RESPONSIVE BREAKPOINTS ===
+- Mobile: < 640px — single column, stacked layouts, hamburger menu
+- Tablet: 640px–1023px — 2 columns for styles grid
+- Desktop: 1024px+ — 3 columns, side-by-side hero layout
+
+=== PERFORMANCE REQUIREMENTS ===
+- All images: use loading="lazy" attribute
+- Styles API response: cache in React state, no repeated calls
+- Show skeleton loaders while data is fetching
+- Smooth scroll behavior: html { scroll-behavior: smooth }
+
+=== ENVIRONMENT VARIABLES NEEDED ===
+Create a .env file with placeholders:
+DATABASE_URL=postgresql://...
+JWT_SECRET=your_jwt_secret_here
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_api_key
+CLOUDINARY_API_SECRET=your_api_secret
+PORT=3000
+
+=== FINAL REQUIREMENTS ===
+1. The app must run with a single "npm run dev" command from root using concurrently (frontend on port 5173, backend on port 3000)
+2. Create a root package.json with scripts: "dev" (runs both), "build", "start"
+3. All text content must be in Russian
+4. No TypeScript — use plain JavaScript only
+5. Do not use any paid UI component libraries — only TailwindCSS + custom components
+6. Make sure CORS is configured on the backend to allow frontend origin
+7. The homepage must look premium, modern, and professional — comparable to top SaaS landing pages
+8. After building, show me the full file structure and confirm all sections are implemented
