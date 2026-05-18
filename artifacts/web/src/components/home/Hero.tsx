@@ -1,6 +1,9 @@
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { useGetStatsSummary } from "@workspace/api-client-react";
+import { useAuth } from "@/lib/auth";
+import { useAuthModal } from "@/components/auth/AuthModal";
+import { useLocation } from "wouter";
 import businessImg from "@/assets/hero/business.png";
 import animeImg from "@/assets/hero/anime.png";
 import fantasyImg from "@/assets/hero/fantasy.png";
@@ -8,7 +11,14 @@ import artImg from "@/assets/hero/art.png";
 
 export function Hero() {
   const { data: stats } = useGetStatsSummary();
+  const { user } = useAuth();
+  const { open } = useAuthModal();
+  const [, setLocation] = useLocation();
 
+  const onPrimary = () => {
+    if (user) setLocation("/styles");
+    else open("register");
+  };
   const scrollToStyles = () => {
     document.getElementById("styles")?.scrollIntoView({ behavior: "smooth" });
   };
@@ -41,7 +51,7 @@ export function Hero() {
             </p>
 
             <div className="flex flex-col sm:flex-row gap-4 mt-4">
-              <Button size="lg" className="h-14 px-8 bg-gradient-primary text-white border-0 hover:opacity-90 shadow-[0_0_30px_rgba(124,58,237,0.3)] hover:shadow-[0_0_40px_rgba(124,58,237,0.5)] transition-all hover:scale-105 text-lg font-semibold" onClick={scrollToStyles}>
+              <Button size="lg" className="h-14 px-8 bg-gradient-primary text-white border-0 hover:opacity-90 shadow-[0_0_30px_rgba(124,58,237,0.3)] hover:shadow-[0_0_40px_rgba(124,58,237,0.5)] transition-all hover:scale-105 text-lg font-semibold" onClick={onPrimary}>
                 🚀 Попробовать бесплатно
               </Button>
               <Button size="lg" variant="outline" className="h-14 px-8 border-border hover:bg-white/5 text-white text-lg font-medium" onClick={scrollToStyles}>

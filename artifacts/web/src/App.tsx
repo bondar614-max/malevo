@@ -8,6 +8,9 @@ import Generate from "@/pages/Generate";
 import Styles from "@/pages/Styles";
 import Admin from "@/pages/Admin";
 import AdminLogin from "@/pages/AdminLogin";
+import Account from "@/pages/Account";
+import { AuthProvider } from "@/lib/auth";
+import { AuthModalProvider } from "@/components/auth/AuthModal";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -25,6 +28,7 @@ function Router() {
       <Route path="/generate/:id" component={Generate} />
       <Route path="/admin/login" component={AdminLogin} />
       <Route path="/admin" component={Admin} />
+      <Route path="/account" component={Account} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -38,12 +42,16 @@ function App() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-          <Router />
-        </WouterRouter>
-        <Toaster />
-      </TooltipProvider>
+      <AuthProvider>
+        <AuthModalProvider>
+          <TooltipProvider>
+            <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+              <Router />
+            </WouterRouter>
+            <Toaster />
+          </TooltipProvider>
+        </AuthModalProvider>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }
