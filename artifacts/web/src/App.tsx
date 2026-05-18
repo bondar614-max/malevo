@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/Home";
 import Generate from "@/pages/Generate";
+import Styles from "@/pages/Styles";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -18,6 +19,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={Home} />
+      <Route path="/styles" component={Styles} />
       <Route path="/generate/:id" component={Generate} />
       <Route component={NotFound} />
     </Switch>

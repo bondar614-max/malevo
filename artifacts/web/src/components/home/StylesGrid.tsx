@@ -128,6 +128,19 @@ export function StylesGrid() {
             </AnimatePresence>
           )}
         </div>
+
+        {/* View all CTA */}
+        <div className="flex justify-center mt-12">
+          <Link href="/styles">
+            <Button
+              size="lg"
+              variant="outline"
+              className="h-14 px-8 rounded-full border-[#7C3AED]/40 bg-[#7C3AED]/10 text-white hover:bg-[#7C3AED]/20 hover:border-[#7C3AED] backdrop-blur-md text-base font-semibold shadow-[0_0_20px_rgba(124,58,237,0.2)]"
+            >
+              Смотреть все стили <ChevronRight size={18} className="ml-1" />
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {/* Quick View Modal */}
