@@ -158,6 +158,7 @@ const StyleSchema = z.object({
   title: z.string().min(1),
   shortDescription: z.string().min(1),
   fullDescription: z.string().default(""),
+  prompt: z.string().default(""),
   category: z.string().min(1),
   price: z.number().nonnegative(),
   previewImageUrl: z.string().min(1),
@@ -167,6 +168,7 @@ const StyleSchema = z.object({
   isActive: z.boolean().default(true),
   sortOrder: z.number().int().optional(),
   ordersCount: z.number().int().nonnegative().default(0),
+  photosRequired: z.number().int().min(1).max(3).default(1),
 });
 
 router.get("/admin/styles", async (_req, res) => {
@@ -187,6 +189,7 @@ router.post("/admin/styles", async (req, res) => {
     title: d.title,
     shortDescription: d.shortDescription,
     fullDescription: d.fullDescription,
+    prompt: d.prompt,
     category: d.category,
     price: d.price.toFixed(2),
     previewImageUrl: d.previewImageUrl,
@@ -196,6 +199,7 @@ router.post("/admin/styles", async (req, res) => {
     isActive: d.isActive,
     sortOrder,
     ordersCount: d.ordersCount,
+    photosRequired: d.photosRequired,
   }).returning();
   res.status(201).json(s);
 });
@@ -208,6 +212,7 @@ router.patch("/admin/styles/:id", async (req, res) => {
   if (d.title !== undefined) updates.title = d.title;
   if (d.shortDescription !== undefined) updates.shortDescription = d.shortDescription;
   if (d.fullDescription !== undefined) updates.fullDescription = d.fullDescription;
+  if (d.prompt !== undefined) updates.prompt = d.prompt;
   if (d.category !== undefined) updates.category = d.category;
   if (d.price !== undefined) updates.price = d.price.toFixed(2);
   if (d.previewImageUrl !== undefined) updates.previewImageUrl = d.previewImageUrl;
@@ -217,6 +222,7 @@ router.patch("/admin/styles/:id", async (req, res) => {
   if (d.isActive !== undefined) updates.isActive = d.isActive;
   if (d.sortOrder !== undefined) updates.sortOrder = d.sortOrder;
   if (d.ordersCount !== undefined) updates.ordersCount = d.ordersCount;
+  if (d.photosRequired !== undefined) updates.photosRequired = d.photosRequired;
   await db.update(stylesTable).set(updates).where(eq(stylesTable.id, req.params.id));
   res.json({ ok: true });
 });

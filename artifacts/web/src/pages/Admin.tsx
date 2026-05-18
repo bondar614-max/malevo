@@ -24,8 +24,10 @@ interface TariffRow {
 }
 interface StyleRow {
   id: string; title: string; shortDescription: string; fullDescription: string;
+  prompt: string;
   category: string; price: number; previewImageUrl: string; exampleImages: string[];
   generationTime: number; rating: number; isActive: boolean; sortOrder: number; ordersCount: number;
+  photosRequired: number;
 }
 
 function formatDate(iso: string | null): string {
@@ -386,7 +388,7 @@ function StylesTab() {
           <h2 className="text-3xl font-bold text-white">Стили генерации</h2>
           <p className="text-sm text-muted-foreground mt-1">Стили показываются в каталоге в порядке поля «Порядок»</p>
         </div>
-        <Button onClick={() => setEditing({ title: "", shortDescription: "", fullDescription: "", category: "Портрет", price: 0, previewImageUrl: "", exampleImages: [], generationTime: 60, rating: 4.9, isActive: true, ordersCount: 0 })} className="bg-gradient-primary text-white border-0"><Plus size={16} className="mr-2" /> Добавить стиль</Button>
+        <Button onClick={() => setEditing({ title: "", shortDescription: "", fullDescription: "", prompt: "", category: "Портрет", price: 0, previewImageUrl: "", exampleImages: [], generationTime: 60, rating: 4.9, isActive: true, ordersCount: 0, photosRequired: 1 })} className="bg-gradient-primary text-white border-0"><Plus size={16} className="mr-2" /> Добавить стиль</Button>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {rows?.map((s) => (
@@ -427,6 +429,7 @@ function StyleEditModal({ style, onClose, onSaved }: { style: Partial<StyleRow>;
     title: style.title ?? "",
     shortDescription: style.shortDescription ?? "",
     fullDescription: style.fullDescription ?? "",
+    prompt: style.prompt ?? "",
     category: style.category ?? "Портрет",
     price: String(style.price ?? 0),
     previewImageUrl: style.previewImageUrl ?? "",
@@ -436,6 +439,7 @@ function StyleEditModal({ style, onClose, onSaved }: { style: Partial<StyleRow>;
     isActive: style.isActive ?? true,
     sortOrder: String(style.sortOrder ?? 0),
     ordersCount: String(style.ordersCount ?? 0),
+    photosRequired: (style.photosRequired ?? 1) as 1 | 2 | 3,
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -451,6 +455,7 @@ function StyleEditModal({ style, onClose, onSaved }: { style: Partial<StyleRow>;
         title: form.title,
         shortDescription: form.shortDescription,
         fullDescription: form.fullDescription,
+        prompt: form.prompt,
         category: form.category,
         price: Number(form.price),
         previewImageUrl: form.previewImageUrl,
@@ -459,6 +464,7 @@ function StyleEditModal({ style, onClose, onSaved }: { style: Partial<StyleRow>;
         rating: Number(form.rating),
         isActive: form.isActive,
         ordersCount: Number(form.ordersCount),
+        photosRequired: Number(form.photosRequired),
       };
       if (style.id) {
         body.sortOrder = Number(form.sortOrder);
@@ -480,6 +486,27 @@ function StyleEditModal({ style, onClose, onSaved }: { style: Partial<StyleRow>;
       </div>
       <Field label="Краткое описание"><Input value={form.shortDescription} onChange={(e) => upd("shortDescription", e.target.value)} className="bg-secondary border-border text-white" /></Field>
       <Field label="Полное описание"><Textarea value={form.fullDescription} onChange={(e) => upd("fullDescription", e.target.value)} rows={4} className="bg-secondary border-border text-white" /></Field>
+      <Field label="Промпт для генерации (используется нейросетью)">
+        <Textarea value={form.prompt} onChange={(e) => upd("prompt", e.target.value)} rows={4} placeholder="A professional studio portrait, soft lighting, sharp focus, 8k..." className="bg-secondary border-border text-white font-mono text-xs" />
+      </Field>
+      <Field label="Сколько фотографий загружает пользователь">
+        <div className="flex gap-2">
+          {[1, 2, 3].map((n) => (
+            <button
+              key={n}
+              type="button"
+              onClick={() => upd("photosRequired", n as 1 | 2 | 3)}
+              className={`flex-1 h-12 rounded-lg border font-semibold transition-all ${
+                form.photosRequired === n
+                  ? "bg-gradient-primary text-white border-transparent shadow-[0_0_15px_rgba(124,58,237,0.4)]"
+                  : "bg-secondary border-border text-muted-foreground hover:text-white hover:border-[#7C3AED]/50"
+              }`}
+            >
+              {n} {n === 1 ? "фото" : "фото"}
+            </button>
+          ))}
+        </div>
+      </Field>
       <Field label="URL превью-фотографии"><Input value={form.previewImageUrl} onChange={(e) => upd("previewImageUrl", e.target.value)} placeholder="/api/static/seed/xxx.png или https://..." className="bg-secondary border-border text-white" /></Field>
       <Field label="Дополнительные фото (по одному URL в строке)"><Textarea value={form.exampleImages} onChange={(e) => upd("exampleImages", e.target.value)} rows={3} className="bg-secondary border-border text-white font-mono text-xs" /></Field>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

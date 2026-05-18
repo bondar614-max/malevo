@@ -21,6 +21,8 @@ export const ListStylesQueryParams = zod.object({
   category: zod.coerce.string().optional(),
 });
 
+export const listStylesResponsePhotosRequiredMax = 3;
+
 export const ListStylesResponseItem = zod.object({
   id: zod.string(),
   title: zod.string(),
@@ -33,6 +35,7 @@ export const ListStylesResponseItem = zod.object({
   ordersCount: zod.number(),
   category: zod.string(),
   rating: zod.number().optional(),
+  photosRequired: zod.number().min(1).max(listStylesResponsePhotosRequiredMax),
 });
 export const ListStylesResponse = zod.array(ListStylesResponseItem);
 
@@ -42,6 +45,8 @@ export const ListStylesResponse = zod.array(ListStylesResponseItem);
 export const GetStyleParams = zod.object({
   id: zod.coerce.string(),
 });
+
+export const getStyleResponsePhotosRequiredMax = 3;
 
 export const GetStyleResponse = zod.object({
   id: zod.string(),
@@ -55,6 +60,7 @@ export const GetStyleResponse = zod.object({
   ordersCount: zod.number(),
   category: zod.string(),
   rating: zod.number().optional(),
+  photosRequired: zod.number().min(1).max(getStyleResponsePhotosRequiredMax),
 });
 
 /**
@@ -79,6 +85,8 @@ export const ListCategoriesResponse = zod.array(ListCategoriesResponseItem);
 /**
  * @summary Trending styles by orders_count
  */
+export const listTrendingStylesResponsePhotosRequiredMax = 3;
+
 export const ListTrendingStylesResponseItem = zod.object({
   id: zod.string(),
   title: zod.string(),
@@ -91,6 +99,10 @@ export const ListTrendingStylesResponseItem = zod.object({
   ordersCount: zod.number(),
   category: zod.string(),
   rating: zod.number().optional(),
+  photosRequired: zod
+    .number()
+    .min(1)
+    .max(listTrendingStylesResponsePhotosRequiredMax),
 });
 export const ListTrendingStylesResponse = zod.array(
   ListTrendingStylesResponseItem,

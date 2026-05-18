@@ -17,6 +17,7 @@ function serialize(s: typeof stylesTable.$inferSelect) {
     ordersCount: s.ordersCount,
     category: s.category,
     rating: Number(s.rating),
+    photosRequired: s.photosRequired,
   };
 }
 

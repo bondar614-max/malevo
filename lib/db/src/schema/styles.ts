@@ -14,6 +14,7 @@ export const stylesTable = pgTable("styles", {
   isActive: boolean("is_active").notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(0),
   ordersCount: integer("orders_count").notNull().default(0),
+  photosRequired: integer("photos_required").notNull().default(1),
   category: varchar("category", { length: 100 }).notNull(),
   rating: numeric("rating", { precision: 3, scale: 2 }).notNull().default("4.9"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
