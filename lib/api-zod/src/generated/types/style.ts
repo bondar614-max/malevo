@@ -18,4 +18,9 @@ export interface Style {
   ordersCount: number;
   category: string;
   rating?: number;
+  /**
+   * @minimum 1
+   * @maximum 3
+   */
+  photosRequired: number;
 }

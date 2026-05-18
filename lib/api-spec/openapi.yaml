@@ -227,6 +227,7 @@ components:
         - generationTime
         - ordersCount
         - category
+        - photosRequired
       properties:
         id: { type: string }
         title: { type: string }
@@ -241,6 +242,7 @@ components:
         ordersCount: { type: integer }
         category: { type: string }
         rating: { type: number }
+        photosRequired: { type: integer, minimum: 1, maximum: 3 }
 
     GalleryItem:
       type: object
