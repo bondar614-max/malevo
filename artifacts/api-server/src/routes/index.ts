@@ -5,6 +5,7 @@ import statsRouter from "./stats";
 import galleryRouter from "./gallery";
 import reviewsRouter from "./reviews";
 import authRouter from "./auth";
+import adminRouter from "./admin";
 
 const router: IRouter = Router();
 
@@ -14,5 +15,6 @@ router.use(statsRouter);
 router.use(galleryRouter);
 router.use(reviewsRouter);
 router.use(authRouter);
+router.use(adminRouter);
 
 export default router;
