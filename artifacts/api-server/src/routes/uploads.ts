@@ -1,19 +1,11 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import multer from "multer";
-import path from "node:path";
-import fs from "node:fs";
-import crypto from "node:crypto";
-import { fileURLToPath } from "node:url";
 import { db, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { requireAuth } from "../lib/auth";
+import { uploadBufferToStorage } from "../lib/storage-helpers";
 
 const router: IRouter = Router();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const uploadsDir = path.resolve(__dirname, "..", "public", "uploads");
-fs.mkdirSync(uploadsDir, { recursive: true });
 
 async function requireAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!req.auth) { res.status(401).json({ error: "Unauthorized" }); return; }
@@ -24,17 +16,8 @@ async function requireAdmin(req: Request, res: Response, next: NextFunction): Pr
 
 const ALLOWED = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadsDir),
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase().replace(/[^.a-z0-9]/g, "") || ".png";
-    const safeExt = [".jpg", ".jpeg", ".png", ".webp", ".gif"].includes(ext) ? ext : ".png";
-    cb(null, `${Date.now()}_${crypto.randomBytes(6).toString("hex")}${safeExt}`);
-  },
-});
-
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024, files: 10 },
   fileFilter: (_req, file, cb) => {
     if (!ALLOWED.has(file.mimetype)) return cb(new Error("Только JPG/PNG/WebP/GIF"));
@@ -54,14 +37,21 @@ function handleUpload(req: Request, res: Response, next: NextFunction): void {
   });
 }
 
-router.post("/admin/uploads", requireAuth, requireAdmin, handleUpload, (req, res) => {
+router.post("/admin/uploads", requireAuth, requireAdmin, handleUpload, async (req, res) => {
   const files = (req.files as Express.Multer.File[] | undefined) ?? [];
   if (files.length === 0) {
     res.status(400).json({ error: "Файлы не загружены" });
     return;
   }
-  const urls = files.map((f) => `/api/static/uploads/${f.filename}`);
-  res.json({ urls });
+  try {
+    const urls = await Promise.all(
+      files.map((f) => uploadBufferToStorage(f.buffer, f.mimetype, "admin")),
+    );
+    res.json({ urls });
+  } catch (err) {
+    req.log.error({ err }, "admin upload to object storage failed");
+    res.status(500).json({ error: "Не удалось сохранить файл" });
+  }
 });
 
 export default router;

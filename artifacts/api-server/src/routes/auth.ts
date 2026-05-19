@@ -1,21 +1,13 @@
 import { Router, type IRouter } from "express";
-import path from "node:path";
-import fs from "node:fs";
-import crypto from "node:crypto";
-import { fileURLToPath } from "node:url";
 import { db, usersTable, ordersTable, stylesTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { z } from "zod";
 import { RegisterBody, LoginBody } from "@workspace/api-zod";
 import { hashPassword, comparePassword, signToken, requireAuth } from "../lib/auth";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const generatedDir = path.resolve(__dirname, "..", "public", "generated");
-fs.mkdirSync(generatedDir, { recursive: true });
+import { uploadBufferToStorage, isLocalStorageUrl } from "../lib/storage-helpers";
 
 async function mirrorIfRemote(url: string): Promise<string> {
-  if (url.startsWith("/api/static/")) return url;
+  if (isLocalStorageUrl(url)) return url;
   try {
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), 30_000);
@@ -23,12 +15,8 @@ async function mirrorIfRemote(url: string): Promise<string> {
     clearTimeout(t);
     if (!r.ok) return url;
     const ct = (r.headers.get("content-type") ?? "image/png").split(";")[0]!.trim();
-    const extMap: Record<string, string> = { "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif" };
-    const ext = extMap[ct] ?? ".png";
     const buf = Buffer.from(await r.arrayBuffer());
-    const name = `${Date.now()}_${crypto.randomBytes(6).toString("hex")}${ext}`;
-    await fs.promises.writeFile(path.join(generatedDir, name), buf);
-    return `/api/static/generated/${name}`;
+    return await uploadBufferToStorage(buf, ct, "generated");
   } catch { return url; }
 }
 
