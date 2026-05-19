@@ -7,6 +7,7 @@ import reviewsRouter from "./reviews";
 import authRouter from "./auth";
 import adminRouter from "./admin";
 import generateRouter from "./generate";
+import uploadsRouter from "./uploads";
 
 const router: IRouter = Router();
 
@@ -17,6 +18,7 @@ router.use(galleryRouter);
 router.use(reviewsRouter);
 router.use(authRouter);
 router.use(generateRouter);
+router.use(uploadsRouter);
 router.use(adminRouter);
 
 export default router;
