@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { apiFetch, clearAuth, getStoredUser, getToken } from "@/lib/admin-api";
-import { LogOut, Users, ImageIcon, Tag, Layers, Pencil, Trash2, Plus, X, Shield } from "lucide-react";
+import { LogOut, Users, ImageIcon, Tag, Layers, Pencil, Trash2, Plus, X, Shield, Upload, Loader2 } from "lucide-react";
 
 type Tab = "users" | "orders" | "tariffs" | "styles";
 
@@ -507,8 +507,15 @@ function StyleEditModal({ style, onClose, onSaved }: { style: Partial<StyleRow>;
           ))}
         </div>
       </Field>
-      <Field label="URL превью-фотографии"><Input value={form.previewImageUrl} onChange={(e) => upd("previewImageUrl", e.target.value)} placeholder="/api/static/seed/xxx.png или https://..." className="bg-secondary border-border text-white" /></Field>
-      <Field label="Дополнительные фото (по одному URL в строке)"><Textarea value={form.exampleImages} onChange={(e) => upd("exampleImages", e.target.value)} rows={3} className="bg-secondary border-border text-white font-mono text-xs" /></Field>
+      <Field label="Превью-фотография">
+        <PreviewUploader value={form.previewImageUrl} onChange={(url) => upd("previewImageUrl", url)} />
+      </Field>
+      <Field label="Дополнительные фото (примеры результата)">
+        <MultiImageUploader
+          value={form.exampleImages.split("\n").map((s) => s.trim()).filter(Boolean)}
+          onChange={(arr) => upd("exampleImages", arr.join("\n"))}
+        />
+      </Field>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Field label="Стоимость, ₽"><Input type="number" step="0.01" value={form.price} onChange={(e) => upd("price", e.target.value)} className="bg-secondary border-border text-white" /></Field>
         <Field label="Время, сек"><Input type="number" value={form.generationTime} onChange={(e) => upd("generationTime", e.target.value)} className="bg-secondary border-border text-white" /></Field>
@@ -548,4 +555,127 @@ function Modal({ title, children, onClose, wide }: { title: string; children: Re
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <div><Label className="text-white text-sm mb-1.5 block">{label}</Label>{children}</div>;
+}
+
+async function uploadFiles(files: File[]): Promise<string[]> {
+  if (files.length === 0) return [];
+  const fd = new FormData();
+  files.forEach((f) => fd.append("files", f));
+  const token = getToken();
+  const res = await fetch("/api/admin/uploads", {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    body: fd,
+  });
+  if (!res.ok) {
+    let msg = `${res.status} ${res.statusText}`;
+    try { const b = await res.json(); if (b?.error) msg = b.error; } catch { /* ignore */ }
+    throw new Error(msg);
+  }
+  const data = (await res.json()) as { urls: string[] };
+  return data.urls;
+}
+
+function PreviewUploader({ value, onChange }: { value: string; onChange: (url: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function pick(f: File | null) {
+    if (!f) return;
+    setBusy(true); setErr(null);
+    try {
+      const [url] = await uploadFiles([f]);
+      if (url) onChange(url);
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div className="flex items-start gap-4">
+      <div className="w-32 h-32 rounded-xl border border-border bg-secondary overflow-hidden flex items-center justify-center flex-shrink-0">
+        {value ? (
+          <img src={value} alt="" className="w-full h-full object-cover" />
+        ) : (
+          <ImageIcon size={32} className="text-muted-foreground" />
+        )}
+      </div>
+      <div className="flex-1 space-y-2">
+        <label className="inline-flex items-center gap-2 px-4 h-10 rounded-lg bg-secondary border border-border text-white text-sm font-medium cursor-pointer hover:border-[#7C3AED]/50 transition-colors">
+          {busy ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+          {busy ? "Загрузка..." : value ? "Заменить фото" : "Загрузить фото"}
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            className="hidden"
+            disabled={busy}
+            onChange={(e) => { const f = e.target.files?.[0] ?? null; e.target.value = ""; void pick(f); }}
+          />
+        </label>
+        {value && (
+          <button
+            type="button"
+            onClick={() => onChange("")}
+            className="ml-2 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-red-400"
+          >
+            <Trash2 size={12} /> Удалить
+          </button>
+        )}
+        {err && <div className="text-xs text-red-400">{err}</div>}
+        <div className="text-xs text-muted-foreground">JPG / PNG / WebP / GIF, до 10 МБ</div>
+      </div>
+    </div>
+  );
+}
+
+function MultiImageUploader({ value, onChange }: { value: string[]; onChange: (arr: string[]) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function pick(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setBusy(true); setErr(null);
+    try {
+      const urls = await uploadFiles(Array.from(files));
+      onChange([...value, ...urls]);
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
+  function removeAt(i: number) {
+    const next = value.slice(); next.splice(i, 1); onChange(next);
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-3 md:grid-cols-5 gap-3">
+        {value.map((url, i) => (
+          <div key={`${url}-${i}`} className="relative group aspect-square rounded-xl overflow-hidden border border-border bg-secondary">
+            <img src={url} alt="" className="w-full h-full object-cover" />
+            <button
+              type="button"
+              onClick={() => removeAt(i)}
+              className="absolute top-1 right-1 w-7 h-7 rounded-full bg-black/70 backdrop-blur text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/80"
+              aria-label="Удалить"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ))}
+        <label className="aspect-square rounded-xl border-2 border-dashed border-border bg-secondary/30 hover:border-[#7C3AED]/50 hover:bg-secondary/50 flex flex-col items-center justify-center gap-2 text-muted-foreground hover:text-white cursor-pointer transition-all">
+          {busy ? <Loader2 size={24} className="animate-spin text-[#7C3AED]" /> : <Plus size={24} />}
+          <span className="text-xs font-medium">{busy ? "Загрузка..." : "Добавить"}</span>
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            multiple
+            className="hidden"
+            disabled={busy}
+            onChange={(e) => { const fs = e.target.files; e.target.value = ""; void pick(fs); }}
+          />
+        </label>
+      </div>
+      {err && <div className="text-xs text-red-400">{err}</div>}
+      <div className="text-xs text-muted-foreground">Можно выбрать несколько файлов сразу</div>
+    </div>
+  );
 }
