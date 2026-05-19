@@ -390,7 +390,7 @@ function StylesTab() {
         </div>
         <Button onClick={() => setEditing({ title: "", shortDescription: "", fullDescription: "", prompt: "", category: "Портрет", price: 0, previewImageUrl: "", exampleImages: [], generationTime: 60, rating: 4.9, isActive: true, ordersCount: 0, photosRequired: 1 })} className="bg-gradient-primary text-white border-0"><Plus size={16} className="mr-2" /> Добавить стиль</Button>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
         {rows?.map((s) => (
           <div key={s.id} className="bg-card border border-border rounded-xl overflow-hidden flex flex-col">
             <div className="aspect-[4/3] bg-secondary relative">
