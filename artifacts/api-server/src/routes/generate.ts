@@ -1,9 +1,45 @@
 import { Router, type IRouter } from "express";
 import multer from "multer";
+import path from "node:path";
+import fs from "node:fs";
+import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { db, ordersTable, stylesTable, usersTable } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
 import { requireAuth } from "../lib/auth";
 import { kieUploadFile, kieCreateNanoBananaProTask, kieGetTask } from "../lib/kie";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const generatedDir = path.resolve(__dirname, "..", "public", "generated");
+fs.mkdirSync(generatedDir, { recursive: true });
+
+const EXT_BY_MIME: Record<string, string> = {
+  "image/png": ".png",
+  "image/jpeg": ".jpg",
+  "image/webp": ".webp",
+  "image/gif": ".gif",
+};
+
+async function mirrorRemoteImage(url: string, log: { error: (o: object, m?: string) => void }): Promise<string> {
+  try {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 60_000);
+    const r = await fetch(url, { signal: ac.signal });
+    clearTimeout(t);
+    if (!r.ok) throw new Error(`fetch ${r.status}`);
+    const ct = r.headers.get("content-type") ?? "image/png";
+    const ext = EXT_BY_MIME[ct.split(";")[0]!.trim()] ?? path.extname(new URL(url).pathname).toLowerCase() ?? ".png";
+    const safeExt = [".png", ".jpg", ".jpeg", ".webp", ".gif"].includes(ext) ? ext : ".png";
+    const buf = Buffer.from(await r.arrayBuffer());
+    const name = `${Date.now()}_${crypto.randomBytes(6).toString("hex")}${safeExt}`;
+    await fs.promises.writeFile(path.join(generatedDir, name), buf);
+    return `/api/static/generated/${name}`;
+  } catch (err) {
+    log.error({ err, url }, "mirror failed; using upstream url");
+    return url;
+  }
+}
 
 const router: IRouter = Router();
 
@@ -220,12 +256,16 @@ router.get("/generate/:orderId/status", requireAuth, async (req, res) => {
   try {
     const info = await kieGetTask(order.kieTaskId);
     if (info.state === "success" && info.resultUrls.length > 0) {
+      // Mirror kie temp URLs to our own storage so images render reliably
+      // (kie sets Content-Disposition: attachment and files can be 7+ MB on a
+      // third-party CDN). Falls back to the upstream URL on failure.
+      const mirrored = await Promise.all(info.resultUrls.map((u) => mirrorRemoteImage(u, req.log)));
       // Idempotent success transition.
       await db
         .update(ordersTable)
-        .set({ status: "success", resultPhotos: info.resultUrls, completedAt: new Date() })
+        .set({ status: "success", resultPhotos: mirrored, completedAt: new Date() })
         .where(and(eq(ordersTable.id, order.id), eq(ordersTable.status, "processing")));
-      res.json({ orderId: order.id, status: "success", resultPhotos: info.resultUrls });
+      res.json({ orderId: order.id, status: "success", resultPhotos: mirrored });
       return;
     }
     if (info.state === "fail") {
