@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
-import { db, usersTable, ordersTable, stylesTable, tariffsTable } from "@workspace/db";
+import { db, usersTable, ordersTable, stylesTable, tariffsTable, servicesTable, locationsTable } from "@workspace/db";
 import { eq, desc, sql } from "drizzle-orm";
 import { z } from "zod";
 import { hashPassword, requireAuth } from "../lib/auth";
@@ -95,6 +95,9 @@ router.get("/admin/orders", async (_req, res) => {
       userEmail: usersTable.email,
       styleId: ordersTable.styleId,
       styleTitle: stylesTable.title,
+      serviceKey: ordersTable.serviceKey,
+      serviceTitle: servicesTable.title,
+      locationName: locationsTable.name,
       status: ordersTable.status,
       amount: ordersTable.amount,
       sourcePhotoUrl: ordersTable.sourcePhotoUrl,
@@ -105,6 +108,8 @@ router.get("/admin/orders", async (_req, res) => {
     .from(ordersTable)
     .leftJoin(usersTable, eq(usersTable.id, ordersTable.userId))
     .leftJoin(stylesTable, eq(stylesTable.id, ordersTable.styleId))
+    .leftJoin(servicesTable, eq(servicesTable.key, ordersTable.serviceKey))
+    .leftJoin(locationsTable, eq(locationsTable.id, ordersTable.locationId))
     .orderBy(desc(ordersTable.createdAt))
     .limit(500);
   res.json(

@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/Home";
 import Generate from "@/pages/Generate";
+import Service from "@/pages/Service";
 import Styles from "@/pages/Styles";
 import Admin from "@/pages/Admin";
 import AdminLogin from "@/pages/AdminLogin";
@@ -26,6 +27,7 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/styles" component={Styles} />
       <Route path="/generate/:id" component={Generate} />
+      <Route path="/service/:key" component={Service} />
       <Route path="/admin/login" component={AdminLogin} />
       <Route path="/admin" component={Admin} />
       <Route path="/account" component={Account} />

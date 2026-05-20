@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, usersTable, ordersTable, stylesTable } from "@workspace/db";
+import { db, usersTable, ordersTable, stylesTable, servicesTable, locationsTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { z } from "zod";
 import { RegisterBody, LoginBody } from "@workspace/api-zod";
@@ -154,12 +154,19 @@ router.get("/auth/me/orders", requireAuth, async (req, res) => {
       resultPhotos: ordersTable.resultPhotos,
       createdAt: ordersTable.createdAt,
       completedAt: ordersTable.completedAt,
-      styleId: stylesTable.id,
+      styleId: ordersTable.styleId,
       styleTitle: stylesTable.title,
       stylePreview: stylesTable.previewImageUrl,
+      serviceKey: ordersTable.serviceKey,
+      serviceTitle: servicesTable.title,
+      servicePreview: servicesTable.previewImageUrl,
+      locationId: ordersTable.locationId,
+      locationName: locationsTable.name,
     })
     .from(ordersTable)
     .leftJoin(stylesTable, eq(ordersTable.styleId, stylesTable.id))
+    .leftJoin(servicesTable, eq(ordersTable.serviceKey, servicesTable.key))
+    .leftJoin(locationsTable, eq(ordersTable.locationId, locationsTable.id))
     .where(eq(ordersTable.userId, req.auth!.userId))
     .orderBy(desc(ordersTable.createdAt));
 
@@ -193,6 +200,11 @@ router.get("/auth/me/orders", requireAuth, async (req, res) => {
       styleId: r.styleId,
       styleTitle: r.styleTitle,
       stylePreview: r.stylePreview,
+      serviceKey: r.serviceKey,
+      serviceTitle: r.serviceTitle,
+      servicePreview: r.servicePreview,
+      locationId: r.locationId,
+      locationName: r.locationName,
     })),
   );
 });
