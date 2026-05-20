@@ -3,6 +3,7 @@ import { Footer } from "@/components/layout/Footer";
 import { Hero } from "@/components/home/Hero";
 import { HowItWorks } from "@/components/home/HowItWorks";
 import { StylesGrid } from "@/components/home/StylesGrid";
+import { ServicesBlock } from "@/components/home/ServicesBlock";
 import { Gallery } from "@/components/home/Gallery";
 import { Reviews } from "@/components/home/Reviews";
 
@@ -13,6 +14,7 @@ export default function Home() {
       <main>
         <Hero />
         <HowItWorks />
+        <ServicesBlock />
         <StylesGrid />
         <Gallery />
         <Reviews />

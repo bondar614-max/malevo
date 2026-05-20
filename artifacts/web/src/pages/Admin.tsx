@@ -5,9 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { apiFetch, clearAuth, getStoredUser, getToken } from "@/lib/admin-api";
-import { LogOut, Users, ImageIcon, Tag, Layers, Pencil, Trash2, Plus, X, Shield, Upload, Loader2 } from "lucide-react";
+import { LogOut, Users, ImageIcon, Tag, Layers, Pencil, Trash2, Plus, X, Shield, Upload, Loader2, Sparkles, MapPin } from "lucide-react";
 
-type Tab = "users" | "orders" | "tariffs" | "styles";
+type Tab = "users" | "orders" | "tariffs" | "styles" | "services" | "locations";
 
 interface UserRow {
   id: string; email: string; name: string; role: string; isBlocked: boolean;
@@ -16,7 +16,18 @@ interface UserRow {
 interface OrderRow {
   id: string; userId: string | null; userEmail: string | null;
   styleId: string | null; styleTitle: string | null;
+  serviceKey: string | null; serviceTitle: string | null; locationName: string | null;
   status: string; amount: number; createdAt: string; completedAt: string | null;
+}
+interface ServiceRow {
+  key: string; title: string; shortDescription: string; fullDescription: string;
+  prompt: string; previewImageUrl: string; price: number;
+  photosMin: number; photosMax: number; generationTime: number;
+  isActive: boolean; accentFrom: string; accentTo: string; badge: string;
+}
+interface LocationRow {
+  id: string; serviceKey: string; name: string; previewImageUrl: string;
+  promptFragment: string; sortOrder: number; isActive: boolean;
 }
 interface TariffRow {
   id: string; name: string; description: string; price: number;
@@ -56,6 +67,8 @@ export default function Admin() {
     { id: "orders", label: "Генерации", icon: ImageIcon },
     { id: "tariffs", label: "Тарифы", icon: Tag },
     { id: "styles", label: "Стили", icon: Layers },
+    { id: "services", label: "Услуги", icon: Sparkles },
+    { id: "locations", label: "Локации", icon: MapPin },
   ];
 
   return (
@@ -102,6 +115,8 @@ export default function Admin() {
           {tab === "orders" && <OrdersTab />}
           {tab === "tariffs" && <TariffsTab />}
           {tab === "styles" && <StylesTab />}
+          {tab === "services" && <ServicesTab />}
+          {tab === "locations" && <LocationsTab />}
         </div>
       </main>
     </div>
@@ -236,7 +251,7 @@ function OrdersTab() {
           <thead className="bg-secondary text-muted-foreground">
             <tr>
               <th className="px-4 py-3 text-left">Пользователь</th>
-              <th className="px-4 py-3 text-left">Стиль</th>
+              <th className="px-4 py-3 text-left">Стиль / Услуга</th>
               <th className="px-4 py-3 text-left">Статус</th>
               <th className="px-4 py-3 text-right">Сумма</th>
               <th className="px-4 py-3 text-left">Создано</th>
@@ -247,7 +262,14 @@ function OrdersTab() {
             {rows?.map((o) => (
               <tr key={o.id} className="border-t border-border hover:bg-white/5">
                 <td className="px-4 py-3 text-white">{o.userEmail ?? "—"}</td>
-                <td className="px-4 py-3">{o.styleTitle ?? "—"}</td>
+                <td className="px-4 py-3">
+                  {o.serviceTitle ? (
+                    <span>
+                      <span className="text-[#EC4899]">⚡</span> {o.serviceTitle}
+                      {o.locationName && <span className="text-muted-foreground"> · {o.locationName}</span>}
+                    </span>
+                  ) : (o.styleTitle ?? "—")}
+                </td>
                 <td className="px-4 py-3"><span className="px-2 py-0.5 rounded text-xs bg-secondary">{o.status}</span></td>
                 <td className="px-4 py-3 text-right">{o.amount.toFixed(2)} ₽</td>
                 <td className="px-4 py-3 text-muted-foreground">{formatDate(o.createdAt)}</td>
@@ -676,6 +698,309 @@ function MultiImageUploader({ value, onChange }: { value: string[]; onChange: (a
       </div>
       {err && <div className="text-xs text-red-400">{err}</div>}
       <div className="text-xs text-muted-foreground">Можно выбрать несколько файлов сразу</div>
+    </div>
+  );
+}
+
+// ===== Services tab =====
+function ServicesTab() {
+  const [rows, setRows] = useState<ServiceRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try { setRows(await apiFetch<ServiceRow[]>("/admin/services")); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  if (error) return <div className="text-red-400">{error}</div>;
+  if (!rows) return <div className="text-muted-foreground">Загрузка...</div>;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-white">Услуги</h1>
+        <p className="text-sm text-muted-foreground">Две предзаполненные услуги — редактируйте параметры и превью.</p>
+      </div>
+      <div className="grid lg:grid-cols-2 gap-6">
+        {rows.map((s) => <ServiceCard key={s.key} initial={s} onSaved={load} />)}
+      </div>
+    </div>
+  );
+}
+
+function ServiceCard({ initial, onSaved }: { initial: ServiceRow; onSaved: () => void }) {
+  const [form, setForm] = useState<ServiceRow>(initial);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  useEffect(() => { setForm(initial); }, [initial]);
+
+  function upd<K extends keyof ServiceRow>(k: K, v: ServiceRow[K]) { setForm((p) => ({ ...p, [k]: v })); }
+
+  async function save() {
+    setSaving(true); setMsg(null);
+    try {
+      await apiFetch(`/admin/services/${form.key}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          title: form.title,
+          shortDescription: form.shortDescription,
+          fullDescription: form.fullDescription,
+          prompt: form.prompt,
+          previewImageUrl: form.previewImageUrl,
+          price: Number(form.price),
+          photosMin: Number(form.photosMin),
+          photosMax: Number(form.photosMax),
+          generationTime: Number(form.generationTime),
+          isActive: form.isActive,
+          accentFrom: form.accentFrom,
+          accentTo: form.accentTo,
+          badge: form.badge,
+        }),
+      });
+      setMsg({ kind: "ok", text: "Сохранено" });
+      onSaved();
+    } catch (e) { setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) }); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <div className="bg-card border border-border rounded-2xl p-6 space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider">{form.key}</div>
+          <h3 className="text-xl font-bold text-white">{form.title}</h3>
+        </div>
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <input type="checkbox" checked={form.isActive} onChange={(e) => upd("isActive", e.target.checked)} /> Активна
+        </label>
+      </div>
+
+      <PreviewUploader value={form.previewImageUrl} onChange={(url) => upd("previewImageUrl", url)} />
+
+      <div>
+        <Label className="text-white text-sm">Название</Label>
+        <Input value={form.title} onChange={(e) => upd("title", e.target.value)} className="mt-1 bg-secondary border-border text-white" />
+      </div>
+      <div>
+        <Label className="text-white text-sm">Короткое описание</Label>
+        <Input value={form.shortDescription} onChange={(e) => upd("shortDescription", e.target.value)} className="mt-1 bg-secondary border-border text-white" />
+      </div>
+      <div>
+        <Label className="text-white text-sm">Полное описание</Label>
+        <Textarea value={form.fullDescription} onChange={(e) => upd("fullDescription", e.target.value)} className="mt-1 bg-secondary border-border text-white" rows={3} />
+      </div>
+      <div>
+        <Label className="text-white text-sm">Промпт (на английском, для kie)</Label>
+        <Textarea value={form.prompt} onChange={(e) => upd("prompt", e.target.value)} className="mt-1 bg-secondary border-border text-white font-mono text-xs" rows={4} />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <Label className="text-white text-sm">Цена, ₽</Label>
+          <Input type="number" min={0} value={form.price} onChange={(e) => upd("price", Number(e.target.value))} className="mt-1 bg-secondary border-border text-white" />
+        </div>
+        <div>
+          <Label className="text-white text-sm">Время, сек</Label>
+          <Input type="number" min={1} value={form.generationTime} onChange={(e) => upd("generationTime", Number(e.target.value))} className="mt-1 bg-secondary border-border text-white" />
+        </div>
+        <div>
+          <Label className="text-white text-sm">Фото мин.</Label>
+          <Input type="number" min={1} max={10} value={form.photosMin} onChange={(e) => upd("photosMin", Number(e.target.value))} className="mt-1 bg-secondary border-border text-white" />
+        </div>
+        <div>
+          <Label className="text-white text-sm">Фото макс.</Label>
+          <Input type="number" min={1} max={10} value={form.photosMax} onChange={(e) => upd("photosMax", Number(e.target.value))} className="mt-1 bg-secondary border-border text-white" />
+        </div>
+        <div>
+          <Label className="text-white text-sm">Акцент от</Label>
+          <Input value={form.accentFrom} onChange={(e) => upd("accentFrom", e.target.value)} className="mt-1 bg-secondary border-border text-white font-mono" />
+        </div>
+        <div>
+          <Label className="text-white text-sm">Акцент до</Label>
+          <Input value={form.accentTo} onChange={(e) => upd("accentTo", e.target.value)} className="mt-1 bg-secondary border-border text-white font-mono" />
+        </div>
+        <div className="col-span-2">
+          <Label className="text-white text-sm">Бейдж</Label>
+          <Input value={form.badge} onChange={(e) => upd("badge", e.target.value)} className="mt-1 bg-secondary border-border text-white" />
+        </div>
+      </div>
+
+      {msg && (
+        <div className={`text-sm rounded-lg p-3 border ${msg.kind === "ok" ? "text-green-400 bg-green-500/10 border-green-500/30" : "text-red-400 bg-red-500/10 border-red-500/30"}`}>{msg.text}</div>
+      )}
+      <Button onClick={save} disabled={saving} className="bg-gradient-primary text-white border-0">
+        {saving ? "Сохранение..." : "Сохранить"}
+      </Button>
+    </div>
+  );
+}
+
+// ===== Locations tab =====
+function LocationsTab() {
+  const [services, setServices] = useState<ServiceRow[]>([]);
+  const [activeService, setActiveService] = useState<string>("review");
+  const [rows, setRows] = useState<LocationRow[] | null>(null);
+  const [editing, setEditing] = useState<LocationRow | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const all = await apiFetch<ServiceRow[]>("/admin/services");
+      setServices(all);
+      const data = await apiFetch<LocationRow[]>(`/admin/locations?serviceKey=${encodeURIComponent(activeService)}`);
+      setRows(data);
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  }, [activeService]);
+  useEffect(() => { void load(); }, [load]);
+
+  async function remove(id: string) {
+    if (!confirm("Удалить локацию?")) return;
+    try { await apiFetch(`/admin/locations/${id}`, { method: "DELETE" }); void load(); }
+    catch (e) { alert(e instanceof Error ? e.message : String(e)); }
+  }
+
+  if (error) return <div className="text-red-400">{error}</div>;
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Локации</h1>
+          <p className="text-sm text-muted-foreground">Локации для услуги «Фото для отзывов» и других услуг.</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <select
+            value={activeService}
+            onChange={(e) => { setActiveService(e.target.value); setRows(null); }}
+            className="h-10 bg-secondary border border-border rounded-lg px-3 text-white text-sm"
+          >
+            {services.map((s) => <option key={s.key} value={s.key}>{s.title}</option>)}
+          </select>
+          <Button
+            onClick={() => setEditing({ id: "", serviceKey: activeService, name: "", previewImageUrl: "", promptFragment: "", sortOrder: (rows?.length ?? 0) + 1, isActive: true })}
+            className="bg-gradient-primary text-white border-0"
+          >
+            <Plus size={16} className="mr-2" /> Добавить
+          </Button>
+        </div>
+      </div>
+
+      {!rows ? <div className="text-muted-foreground">Загрузка...</div> : rows.length === 0 ? (
+        <div className="text-sm text-muted-foreground bg-card border border-border rounded-xl p-6">Локаций пока нет.</div>
+      ) : (
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          {rows.map((l) => (
+            <div key={l.id} className="bg-card border border-border rounded-2xl overflow-hidden flex flex-col">
+              <div className="aspect-square bg-secondary relative">
+                {l.previewImageUrl ? <img src={l.previewImageUrl} alt={l.name} className="w-full h-full object-cover" /> : (
+                  <div className="w-full h-full flex items-center justify-center text-muted-foreground"><MapPin /></div>
+                )}
+                {!l.isActive && <span className="absolute top-2 left-2 text-[10px] px-2 py-0.5 rounded-full bg-black/70 text-muted-foreground border border-border">Скрыта</span>}
+              </div>
+              <div className="p-4 flex-1 flex flex-col gap-2">
+                <div className="font-semibold text-white truncate">{l.name}</div>
+                <div className="text-xs text-muted-foreground line-clamp-2 flex-1">{l.promptFragment}</div>
+                <div className="flex gap-2 pt-2">
+                  <Button size="sm" variant="outline" onClick={() => setEditing(l)} className="flex-1 border-border text-white">
+                    <Pencil size={14} className="mr-1" /> Изм.
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => void remove(l.id)} className="border-red-500/30 text-red-400 hover:bg-red-500/10">
+                    <Trash2 size={14} />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {editing && (
+        <LocationEditor
+          initial={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); void load(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function LocationEditor({ initial, onClose, onSaved }: { initial: LocationRow; onClose: () => void; onSaved: () => void }) {
+  const [form, setForm] = useState<LocationRow>(initial);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const isNew = !form.id;
+
+  function upd<K extends keyof LocationRow>(k: K, v: LocationRow[K]) { setForm((p) => ({ ...p, [k]: v })); }
+
+  async function save() {
+    setSaving(true); setErr(null);
+    try {
+      if (isNew) {
+        await apiFetch("/admin/locations", {
+          method: "POST",
+          body: JSON.stringify({
+            serviceKey: form.serviceKey,
+            name: form.name,
+            previewImageUrl: form.previewImageUrl,
+            promptFragment: form.promptFragment,
+            sortOrder: Number(form.sortOrder),
+            isActive: form.isActive,
+          }),
+        });
+      } else {
+        await apiFetch(`/admin/locations/${form.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            name: form.name,
+            previewImageUrl: form.previewImageUrl,
+            promptFragment: form.promptFragment,
+            sortOrder: Number(form.sortOrder),
+            isActive: form.isActive,
+          }),
+        });
+      }
+      onSaved();
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+      <div className="bg-card border border-border rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-5 border-b border-border sticky top-0 bg-card">
+          <h3 className="text-lg font-bold text-white">{isNew ? "Новая локация" : "Редактировать локацию"}</h3>
+          <button onClick={onClose} className="text-muted-foreground hover:text-white"><X size={20} /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <PreviewUploader value={form.previewImageUrl} onChange={(url) => upd("previewImageUrl", url)} />
+          <div>
+            <Label className="text-white text-sm">Название</Label>
+            <Input value={form.name} onChange={(e) => upd("name", e.target.value)} className="mt-1 bg-secondary border-border text-white" placeholder="Например: Уютное кафе" />
+          </div>
+          <div>
+            <Label className="text-white text-sm">Фрагмент промпта (англ.)</Label>
+            <Textarea value={form.promptFragment} onChange={(e) => upd("promptFragment", e.target.value)} rows={3} className="mt-1 bg-secondary border-border text-white font-mono text-xs" placeholder="sitting in a cozy modern cafe with warm lighting..." />
+            <div className="text-xs text-muted-foreground mt-1">Добавится в конец промпта услуги.</div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-white text-sm">Сортировка</Label>
+              <Input type="number" value={form.sortOrder} onChange={(e) => upd("sortOrder", Number(e.target.value))} className="mt-1 bg-secondary border-border text-white" />
+            </div>
+            <label className="flex items-end gap-2 text-sm text-white pb-2">
+              <input type="checkbox" checked={form.isActive} onChange={(e) => upd("isActive", e.target.checked)} /> Активна
+            </label>
+          </div>
+          {err && <div className="text-sm rounded-lg p-3 border text-red-400 bg-red-500/10 border-red-500/30">{err}</div>}
+        </div>
+        <div className="flex justify-end gap-2 p-5 border-t border-border">
+          <Button variant="outline" onClick={onClose} className="border-border text-white">Отмена</Button>
+          <Button onClick={save} disabled={saving || !form.name} className="bg-gradient-primary text-white border-0">
+            {saving ? "..." : "Сохранить"}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

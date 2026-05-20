@@ -9,6 +9,7 @@ import adminRouter from "./admin";
 import generateRouter from "./generate";
 import uploadsRouter from "./uploads";
 import storageRouter from "./storage";
+import servicesRouter from "./services";
 
 const router: IRouter = Router();
 
@@ -21,6 +22,7 @@ router.use(authRouter);
 router.use(generateRouter);
 router.use(uploadsRouter);
 router.use(storageRouter);
+router.use(servicesRouter);
 router.use(adminRouter);
 
 export default router;

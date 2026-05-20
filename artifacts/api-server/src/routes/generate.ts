@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import multer from "multer";
-import { db, ordersTable, stylesTable, usersTable } from "@workspace/db";
+import { db, ordersTable, stylesTable, usersTable, servicesTable, locationsTable } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
 import { requireAuth } from "../lib/auth";
 import { kieUploadFile, kieCreateNanoBananaProTask, kieGetTask } from "../lib/kie";
@@ -29,11 +29,12 @@ const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_BYTES, files: 3 },
+  limits: { fileSize: MAX_BYTES, files: 10 },
 });
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// ===== Style generation (unchanged behavior) =====
 router.post("/generate", requireAuth, upload.array("photos", 3), async (req, res) => {
   try {
     const styleId = String(req.body?.styleId ?? "");
@@ -70,17 +71,10 @@ router.post("/generate", requireAuth, upload.array("photos", 3), async (req, res
 
     const userId = req.auth!.userId;
     const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
-    if (!user) {
-      res.status(401).json({ error: "Unauthorized" });
-      return;
-    }
-    if (user.isBlocked) {
-      res.status(403).json({ error: "Account blocked" });
-      return;
-    }
+    if (!user) { res.status(401).json({ error: "Unauthorized" }); return; }
+    if (user.isBlocked) { res.status(403).json({ error: "Account blocked" }); return; }
     const price = Number(style.price);
 
-    // 1) Atomically deduct balance FIRST (prevents unpaid task creation on race).
     const debited = await db
       .update(usersTable)
       .set({
@@ -94,20 +88,12 @@ router.post("/generate", requireAuth, upload.array("photos", 3), async (req, res
       return;
     }
 
-    // 2) Create a pending order row so any later failure has a record to refund against.
     const [pendingOrder] = await db
       .insert(ordersTable)
-      .values({
-        userId,
-        styleId,
-        status: "processing",
-        amount: price.toFixed(2),
-        sourcePhotos: [],
-      })
+      .values({ userId, styleId, status: "processing", amount: price.toFixed(2), sourcePhotos: [] })
       .returning();
     const orderId = pendingOrder!.id;
 
-    // Helper to refund this order exactly once.
     async function refundAndFail(message: string): Promise<void> {
       const transitioned = await db
         .update(ordersTable)
@@ -115,18 +101,14 @@ router.post("/generate", requireAuth, upload.array("photos", 3), async (req, res
         .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "processing")))
         .returning({ id: ordersTable.id });
       if (transitioned.length > 0) {
-        await db
-          .update(usersTable)
-          .set({
-            balance: sql`${usersTable.balance} + ${price.toFixed(2)}`,
-            totalSpent: sql`greatest(${usersTable.totalSpent} - ${price.toFixed(2)}, 0)`,
-          })
-          .where(eq(usersTable.id, userId));
+        await db.update(usersTable).set({
+          balance: sql`${usersTable.balance} + ${price.toFixed(2)}`,
+          totalSpent: sql`greatest(${usersTable.totalSpent} - ${price.toFixed(2)}, 0)`,
+        }).where(eq(usersTable.id, userId));
       }
     }
 
     try {
-      // 3) Upload photos to kie.ai.
       const uploadedUrls: string[] = [];
       for (let i = 0; i < files.length; i++) {
         const f = files[i]!;
@@ -135,7 +117,6 @@ router.post("/generate", requireAuth, upload.array("photos", 3), async (req, res
         uploadedUrls.push(url);
       }
 
-      // 4) Submit the generation task.
       const taskId = await kieCreateNanoBananaProTask({
         prompt: style.prompt,
         imageUrls: uploadedUrls,
@@ -143,17 +124,11 @@ router.post("/generate", requireAuth, upload.array("photos", 3), async (req, res
         resolution: "2K",
       });
 
-      // 5) Persist source URLs + task id on the order.
       await db
         .update(ordersTable)
-        .set({
-          sourcePhotoUrl: uploadedUrls[0] ?? null,
-          sourcePhotos: uploadedUrls,
-          kieTaskId: taskId,
-        })
+        .set({ sourcePhotoUrl: uploadedUrls[0] ?? null, sourcePhotos: uploadedUrls, kieTaskId: taskId })
         .where(eq(ordersTable.id, orderId));
 
-      // Bump style.ordersCount (best effort).
       await db
         .update(stylesTable)
         .set({ ordersCount: sql`${stylesTable.ordersCount} + 1` })
@@ -173,8 +148,141 @@ router.post("/generate", requireAuth, upload.array("photos", 3), async (req, res
   }
 });
 
+// ===== Service generation (WB photoshoot / review) =====
+router.post("/generate/service", requireAuth, upload.array("photos", 10), async (req, res) => {
+  try {
+    const serviceKey = String(req.body?.serviceKey ?? "");
+    const locationId = req.body?.locationId ? String(req.body.locationId) : null;
+
+    const [service] = await db.select().from(servicesTable).where(eq(servicesTable.key, serviceKey)).limit(1);
+    if (!service || !service.isActive) {
+      res.status(404).json({ error: "Услуга не найдена" });
+      return;
+    }
+    if (!service.prompt || service.prompt.trim().length === 0) {
+      res.status(400).json({ error: "Услуга ещё не настроена (нет промпта). Обратитесь к администратору." });
+      return;
+    }
+
+    const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+    if (files.length < service.photosMin || files.length > service.photosMax) {
+      res.status(400).json({
+        error: service.photosMin === service.photosMax
+          ? `Нужно загрузить ${service.photosMin} фото`
+          : `Нужно от ${service.photosMin} до ${service.photosMax} фото`,
+      });
+      return;
+    }
+    for (const f of files) {
+      if (!ALLOWED_MIME.has(f.mimetype)) {
+        res.status(400).json({ error: `Неподдерживаемый формат: ${f.mimetype}` });
+        return;
+      }
+    }
+
+    let locationFragment = "";
+    let resolvedLocationId: string | null = null;
+    if (serviceKey === "review") {
+      if (!locationId || !UUID_RE.test(locationId)) {
+        res.status(400).json({ error: "Выберите локацию" });
+        return;
+      }
+      const [loc] = await db.select().from(locationsTable).where(eq(locationsTable.id, locationId)).limit(1);
+      if (!loc || !loc.isActive || loc.serviceKey !== serviceKey) {
+        res.status(404).json({ error: "Локация не найдена" });
+        return;
+      }
+      locationFragment = loc.promptFragment;
+      resolvedLocationId = loc.id;
+    }
+
+    const userId = req.auth!.userId;
+    const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
+    if (!user) { res.status(401).json({ error: "Unauthorized" }); return; }
+    if (user.isBlocked) { res.status(403).json({ error: "Аккаунт заблокирован" }); return; }
+    const price = Number(service.price);
+
+    const debited = await db
+      .update(usersTable)
+      .set({
+        balance: sql`${usersTable.balance} - ${price.toFixed(2)}`,
+        totalSpent: sql`${usersTable.totalSpent} + ${price.toFixed(2)}`,
+      })
+      .where(and(eq(usersTable.id, userId), sql`${usersTable.balance} >= ${price.toFixed(2)}`))
+      .returning({ id: usersTable.id });
+    if (debited.length === 0) {
+      res.status(402).json({ error: "Недостаточно средств на балансе" });
+      return;
+    }
+
+    const [pendingOrder] = await db
+      .insert(ordersTable)
+      .values({
+        userId,
+        serviceKey: service.key,
+        locationId: resolvedLocationId,
+        status: "processing",
+        amount: price.toFixed(2),
+        sourcePhotos: [],
+      })
+      .returning();
+    const orderId = pendingOrder!.id;
+
+    async function refundAndFail(message: string): Promise<void> {
+      const transitioned = await db
+        .update(ordersTable)
+        .set({ status: "failed", errorMessage: message, completedAt: new Date() })
+        .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "processing")))
+        .returning({ id: ordersTable.id });
+      if (transitioned.length > 0) {
+        await db.update(usersTable).set({
+          balance: sql`${usersTable.balance} + ${price.toFixed(2)}`,
+          totalSpent: sql`greatest(${usersTable.totalSpent} - ${price.toFixed(2)}, 0)`,
+        }).where(eq(usersTable.id, userId));
+      }
+    }
+
+    try {
+      const uploadedUrls: string[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i]!;
+        const safeName = `${userId}_${Date.now()}_${i}.${f.mimetype.split("/")[1] ?? "png"}`;
+        const url = await kieUploadFile(f.buffer, safeName, f.mimetype);
+        uploadedUrls.push(url);
+      }
+
+      const finalPrompt = locationFragment
+        ? `${service.prompt} Setting: ${locationFragment}.`
+        : service.prompt;
+
+      const taskId = await kieCreateNanoBananaProTask({
+        prompt: finalPrompt,
+        imageUrls: uploadedUrls,
+        aspectRatio: "auto",
+        resolution: "2K",
+      });
+
+      await db
+        .update(ordersTable)
+        .set({ sourcePhotoUrl: uploadedUrls[0] ?? null, sourcePhotos: uploadedUrls, kieTaskId: taskId })
+        .where(eq(ordersTable.id, orderId));
+
+      res.status(201).json({ orderId, taskId, status: "processing" });
+    } catch (err) {
+      req.log.error({ err, orderId }, "service generation kickoff failed; refunding");
+      await refundAndFail(err instanceof Error ? err.message : "Не удалось запустить генерацию");
+      const msg = err instanceof Error ? err.message : "Не удалось запустить генерацию";
+      res.status(502).json({ error: msg, refunded: true });
+    }
+  } catch (err) {
+    req.log.error({ err }, "service generate failed");
+    const msg = err instanceof Error ? err.message : "Generation failed";
+    res.status(500).json({ error: msg });
+  }
+});
+
 // Auto-fail tasks that have been processing too long.
-const STUCK_TASK_MS = 15 * 60 * 1000; // 15 minutes
+const STUCK_TASK_MS = 15 * 60 * 1000;
 
 router.get("/generate/:orderId/status", requireAuth, async (req, res) => {
   const orderId = String(req.params.orderId ?? "");
@@ -188,7 +296,6 @@ router.get("/generate/:orderId/status", requireAuth, async (req, res) => {
     return;
   }
 
-  // Terminal states — just return what we have.
   if (order.status === "success" || order.status === "failed") {
     res.json({
       orderId: order.id,
@@ -199,9 +306,6 @@ router.get("/generate/:orderId/status", requireAuth, async (req, res) => {
     return;
   }
 
-  // Idempotent refund helper — only the first caller that wins the
-  // status='processing' -> 'failed' transition triggers the credit, preventing
-  // double-refund races between concurrent polls.
   async function failAndRefund(message: string): Promise<boolean> {
     const transitioned = await db
       .update(ordersTable)
@@ -221,7 +325,6 @@ router.get("/generate/:orderId/status", requireAuth, async (req, res) => {
     return true;
   }
 
-  // Auto-fail stuck tasks (covers cases where kie hangs or createTask never set kieTaskId).
   const ageMs = Date.now() - order.createdAt.getTime();
   if (ageMs > STUCK_TASK_MS) {
     await failAndRefund("Превышено время ожидания генерации");
@@ -237,11 +340,7 @@ router.get("/generate/:orderId/status", requireAuth, async (req, res) => {
   try {
     const info = await kieGetTask(order.kieTaskId);
     if (info.state === "success" && info.resultUrls.length > 0) {
-      // Mirror kie temp URLs to our own storage so images render reliably
-      // (kie sets Content-Disposition: attachment and files can be 7+ MB on a
-      // third-party CDN). Falls back to the upstream URL on failure.
       const mirrored = await Promise.all(info.resultUrls.map((u) => mirrorRemoteImage(u, req.log)));
-      // Idempotent success transition.
       await db
         .update(ordersTable)
         .set({ status: "success", resultPhotos: mirrored, completedAt: new Date() })

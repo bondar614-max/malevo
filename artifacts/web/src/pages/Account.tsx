@@ -19,6 +19,11 @@ interface OrderRow {
   styleId: string | null;
   styleTitle: string | null;
   stylePreview: string | null;
+  serviceKey: string | null;
+  serviceTitle: string | null;
+  servicePreview: string | null;
+  locationId: string | null;
+  locationName: string | null;
 }
 
 type Tab = "profile" | "balance" | "orders";
@@ -253,17 +258,23 @@ function OrdersTab() {
     <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
       {rows.map((o) => {
         const status = STATUS_LABELS[o.status] ?? { label: o.status, cls: "bg-secondary border-border text-muted-foreground" };
-        const preview = o.resultPhotos[0] || o.stylePreview;
+        const preview = o.resultPhotos[0] || o.servicePreview || o.stylePreview;
+        const title = o.serviceTitle ?? o.styleTitle ?? "Удалено";
+        const subtitle = o.locationName ? `Локация: ${o.locationName}` : null;
         return (
           <div key={o.id} className="bg-card border border-border rounded-xl overflow-hidden flex flex-col">
             <div className="aspect-[4/3] bg-secondary relative">
-              {preview ? <img src={preview} alt={o.styleTitle ?? ""} className="w-full h-full object-cover" /> : (
+              {preview ? <img src={preview} alt={title} className="w-full h-full object-cover" /> : (
                 <div className="w-full h-full flex items-center justify-center text-muted-foreground"><ImageIcon /></div>
               )}
               <span className={`absolute top-2 left-2 text-xs px-2 py-0.5 rounded border ${status.cls}`}>{status.label}</span>
+              {o.serviceKey && (
+                <span className="absolute top-2 right-2 text-[10px] px-2 py-0.5 rounded-full bg-[#7C3AED]/30 border border-[#7C3AED]/50 text-white uppercase tracking-wider">Услуга</span>
+              )}
             </div>
             <div className="p-4 flex-1 flex flex-col">
-              <div className="font-semibold text-white truncate">{o.styleTitle ?? "Стиль удалён"}</div>
+              <div className="font-semibold text-white truncate">{title}</div>
+              {subtitle && <div className="text-xs text-muted-foreground truncate">{subtitle}</div>}
               <div className="text-xs text-muted-foreground mt-1">{formatDate(o.createdAt)}</div>
               <div className="mt-auto pt-3 flex items-center justify-between">
                 <span className="text-sm text-white">{o.amount.toFixed(2)} ₽</span>
