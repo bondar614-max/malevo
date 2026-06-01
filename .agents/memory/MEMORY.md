@@ -1,0 +1,1 @@
+- [OpenAI/OpenRouter key handling](openrouter-key.md) — project's OPENAI_API_KEY is an OpenRouter key (sk-or-); client switches base URL + model namespace by prefix.

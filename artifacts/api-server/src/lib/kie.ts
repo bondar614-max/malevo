@@ -58,17 +58,23 @@ export interface KieCreateTaskInput {
   resolution?: "1K" | "2K" | "4K";
 }
 
-/** Submit a Nano Banana Pro image-to-image task. Returns the taskId for polling. */
+/**
+ * Submit a Nano Banana Pro task. With image URLs it runs image-to-image;
+ * with an empty list it runs pure text-to-image. Returns the taskId for polling.
+ */
 export async function kieCreateNanoBananaProTask(input: KieCreateTaskInput): Promise<string> {
+  const inner: Record<string, unknown> = {
+    prompt: input.prompt,
+    aspect_ratio: input.aspectRatio ?? "auto",
+    resolution: input.resolution ?? "2K",
+    output_format: "png",
+  };
+  if (input.imageUrls.length > 0) {
+    inner["image_input"] = input.imageUrls;
+  }
   const body = {
     model: "nano-banana-pro",
-    input: {
-      prompt: input.prompt,
-      image_input: input.imageUrls,
-      aspect_ratio: input.aspectRatio ?? "auto",
-      resolution: input.resolution ?? "2K",
-      output_format: "png",
-    },
+    input: inner,
   };
   const res = await fetch(`${KIE_BASE}/api/v1/jobs/createTask`, {
     method: "POST",

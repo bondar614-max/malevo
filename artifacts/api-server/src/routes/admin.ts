@@ -3,6 +3,9 @@ import { db, usersTable, ordersTable, stylesTable, tariffsTable, servicesTable, 
 import { eq, desc, sql } from "drizzle-orm";
 import { z } from "zod";
 import { hashPassword, requireAuth } from "../lib/auth";
+import { getOpenAI, assistModel } from "../lib/openai";
+import { kieCreateNanoBananaProTask, kieGetTask } from "../lib/kie";
+import { uploadBufferToStorage } from "../lib/storage-helpers";
 
 const router: IRouter = Router();
 
@@ -235,6 +238,129 @@ router.patch("/admin/styles/:id", async (req, res) => {
 router.delete("/admin/styles/:id", async (req, res) => {
   await db.delete(stylesTable).where(eq(stylesTable.id, req.params.id));
   res.json({ ok: true });
+});
+
+// ---------- AI assistant for creating styles ----------
+const DEFAULT_STYLE_PRICE = 21;
+
+const AssistSchema = z.object({
+  idea: z.string().min(3).max(4000),
+});
+
+const AssistResultSchema = z.object({
+  title: z.string().min(1),
+  shortDescription: z.string().min(1),
+  fullDescription: z.string().min(1),
+  category: z.string().min(1),
+  prompt: z.string().min(1),
+  imagePrompt: z.string().min(1),
+});
+
+router.post("/admin/styles/assist", async (req, res) => {
+  const parsed = AssistSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Опишите идею стиля (минимум 3 символа)" });
+    return;
+  }
+  const idea = parsed.data.idea.trim();
+
+  let result: z.infer<typeof AssistResultSchema>;
+  try {
+    const completion = await getOpenAI().chat.completions.create({
+      model: assistModel(),
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "Ты — ассистент фоторедактора PhotoGen AI. По идее администратора ты придумываешь карточку нового фотостиля. " +
+            "Отвечай строго JSON-объектом со следующими полями: " +
+            "title (короткое название стиля на русском, 2–4 слова), " +
+            "shortDescription (короткое описание на русском, одна строка до 80 символов), " +
+            "fullDescription (полное описание на русском, 2–3 предложения, что получит пользователь), " +
+            "category (одна категория на русском, например «Деловой», «Творческий», «Гламур»), " +
+            "prompt (инструкция на АНГЛИЙСКОМ для модели редактирования изображений Nano Banana Pro — как преобразовать загруженное пользователем фото в этот стиль, сохраняя лицо и черты человека; детально опиши свет, фон, одежду, настроение), " +
+            "imagePrompt (отдельный промпт на АНГЛИЙСКОМ для генерации привлекательной обложки-примера этого стиля с фотореалистичным человеком; portrait, high quality). " +
+            "Никакого текста кроме JSON.",
+        },
+        { role: "user", content: idea },
+      ],
+      max_completion_tokens: 1200,
+    });
+    const raw = completion.choices[0]?.message?.content ?? "";
+    const json = JSON.parse(raw) as unknown;
+    const validated = AssistResultSchema.safeParse(json);
+    if (!validated.success) {
+      req.log.error({ raw }, "assist returned unexpected shape");
+      res.status(502).json({ error: "ИИ вернул некорректный ответ, попробуйте ещё раз" });
+      return;
+    }
+    result = validated.data;
+  } catch (err) {
+    req.log.error({ err }, "assist text generation failed");
+    res.status(502).json({ error: "Не удалось сгенерировать тексты. Проверьте ключ OpenAI и попробуйте снова." });
+    return;
+  }
+
+  let imageTaskId: string | null = null;
+  try {
+    imageTaskId = await kieCreateNanoBananaProTask({
+      prompt: result.imagePrompt,
+      imageUrls: [],
+      aspectRatio: "3:4",
+      resolution: "2K",
+    });
+  } catch (err) {
+    req.log.error({ err }, "assist preview image kickoff failed");
+  }
+
+  res.json({
+    title: result.title,
+    shortDescription: result.shortDescription,
+    fullDescription: result.fullDescription,
+    category: result.category,
+    prompt: result.prompt,
+    price: DEFAULT_STYLE_PRICE,
+    imageTaskId,
+  });
+});
+
+router.get("/admin/styles/assist/image/:taskId", async (req, res) => {
+  const taskId = String(req.params.taskId ?? "");
+  if (!taskId) {
+    res.status(400).json({ error: "Invalid taskId" });
+    return;
+  }
+  try {
+    const info = await kieGetTask(taskId);
+    if (info.state === "success" && info.resultUrls.length > 0) {
+      const url = info.resultUrls[0]!;
+      let previewImageUrl = url;
+      try {
+        const ac = new AbortController();
+        const t = setTimeout(() => ac.abort(), 60_000);
+        const r = await fetch(url, { signal: ac.signal });
+        clearTimeout(t);
+        if (r.ok) {
+          const ct = (r.headers.get("content-type") ?? "image/png").split(";")[0]!.trim();
+          const buf = Buffer.from(await r.arrayBuffer());
+          previewImageUrl = await uploadBufferToStorage(buf, ct, "previews");
+        }
+      } catch (err) {
+        req.log.error({ err, url }, "assist preview mirror failed; using upstream url");
+      }
+      res.json({ status: "success", previewImageUrl });
+      return;
+    }
+    if (info.state === "fail") {
+      res.json({ status: "failed", error: info.errorMessage ?? "Не удалось сгенерировать изображение" });
+      return;
+    }
+    res.json({ status: "processing" });
+  } catch (err) {
+    req.log.error({ err, taskId }, "assist image status check failed");
+    res.json({ status: "processing" });
+  }
 });
 
 export default router;
