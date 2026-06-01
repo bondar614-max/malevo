@@ -466,8 +466,76 @@ function StyleEditModal({ style, onClose, onSaved }: { style: Partial<StyleRow>;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [idea, setIdea] = useState("");
+  const [assisting, setAssisting] = useState(false);
+  const [assistError, setAssistError] = useState<string | null>(null);
+  const [previewStatus, setPreviewStatus] = useState<"idle" | "generating" | "done" | "failed">("idle");
+
   function upd<K extends keyof typeof form>(key: K, val: typeof form[K]) {
     setForm((f) => ({ ...f, [key]: val }));
+  }
+
+  async function pollPreview(taskId: string): Promise<void> {
+    setPreviewStatus("generating");
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      try {
+        const r = await apiFetch<{ status: string; previewImageUrl?: string; error?: string }>(
+          `/admin/styles/assist/image/${taskId}`,
+        );
+        if (r.status === "success" && r.previewImageUrl) {
+          upd("previewImageUrl", r.previewImageUrl);
+          setPreviewStatus("done");
+          return;
+        }
+        if (r.status === "failed") {
+          setPreviewStatus("failed");
+          return;
+        }
+      } catch {
+        /* keep polling */
+      }
+    }
+    setPreviewStatus("failed");
+  }
+
+  async function runAssist() {
+    if (idea.trim().length < 3) {
+      setAssistError("Опишите идею стиля");
+      return;
+    }
+    setAssisting(true);
+    setAssistError(null);
+    setPreviewStatus("idle");
+    try {
+      const r = await apiFetch<{
+        title: string;
+        shortDescription: string;
+        fullDescription: string;
+        category: string;
+        prompt: string;
+        price: number;
+        imageTaskId: string | null;
+      }>("/admin/styles/assist", { method: "POST", body: JSON.stringify({ idea }) });
+      setForm((f) => ({
+        ...f,
+        title: r.title,
+        shortDescription: r.shortDescription,
+        fullDescription: r.fullDescription,
+        category: r.category,
+        prompt: r.prompt,
+        price: String(r.price),
+      }));
+      if (r.imageTaskId) {
+        void pollPreview(r.imageTaskId);
+      } else {
+        setPreviewStatus("failed");
+      }
+    } catch (e) {
+      setAssistError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAssisting(false);
+    }
   }
 
   async function save() {
@@ -502,6 +570,40 @@ function StyleEditModal({ style, onClose, onSaved }: { style: Partial<StyleRow>;
 
   return <Modal title={style.id ? "Редактировать стиль" : "Новый стиль"} onClose={onClose} wide>
     <div className="space-y-4">
+      <div className="rounded-xl border border-[#7C3AED]/40 bg-[#7C3AED]/10 p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <Sparkles size={18} className="text-[#A78BFA]" />
+          <span className="font-semibold text-white">AI-помощник</span>
+          <span className="text-xs text-muted-foreground">опишите идею — заполнит карточку и создаст превью</span>
+        </div>
+        <Textarea
+          value={idea}
+          onChange={(e) => setIdea(e.target.value)}
+          rows={3}
+          placeholder="Например: деловой портрет в современном офисе, мягкий свет, строгий костюм, уверенный образ для LinkedIn"
+          className="bg-secondary border-border text-white"
+        />
+        <div className="flex items-center gap-3 flex-wrap">
+          <Button
+            type="button"
+            onClick={runAssist}
+            disabled={assisting}
+            className="bg-gradient-primary text-white border-0"
+          >
+            {assisting ? "Генерация..." : "Сгенерировать с ИИ"}
+          </Button>
+          {previewStatus === "generating" && (
+            <span className="text-sm text-[#A78BFA] flex items-center gap-1.5">
+              <Loader2 size={14} className="animate-spin" /> Создаю превью-фото...
+            </span>
+          )}
+          {previewStatus === "done" && <span className="text-sm text-emerald-400">Превью готово ✓</span>}
+          {previewStatus === "failed" && (
+            <span className="text-sm text-amber-400">Превью не удалось — загрузите фото вручную ниже</span>
+          )}
+        </div>
+        {assistError && <div className="text-sm text-red-400">{assistError}</div>}
+      </div>
       <div className="grid grid-cols-2 gap-4">
         <Field label="Название"><Input value={form.title} onChange={(e) => upd("title", e.target.value)} className="bg-secondary border-border text-white" /></Field>
         <Field label="Категория (тег)"><Input value={form.category} onChange={(e) => upd("category", e.target.value)} placeholder="Портрет / Арт / Бизнес / ..." className="bg-secondary border-border text-white" /></Field>
