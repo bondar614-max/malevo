@@ -15,6 +15,7 @@ export const ordersTable = pgTable("orders", {
   sourcePhotos: jsonb("source_photos").$type<string[]>().notNull().default([]),
   resultPhotos: jsonb("result_photos").$type<string[]>().notNull().default([]),
   kieTaskId: varchar("kie_task_id", { length: 255 }),
+  kieTaskIds: jsonb("kie_task_ids").$type<string[]>().notNull().default([]),
   paymentId: varchar("payment_id", { length: 255 }),
   errorMessage: text("error_message"),
   // Review (n8n) order inputs and progress tracking

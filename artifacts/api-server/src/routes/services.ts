@@ -117,7 +117,7 @@ router.get("/admin/locations", requireAuth, requireAdmin, async (req, res) => {
   const rows = await (serviceKey
     ? base.where(eq(locationsTable.serviceKey, serviceKey)).orderBy(asc(locationsTable.sortOrder))
     : base.orderBy(asc(locationsTable.sortOrder)));
-  res.json(rows.map((r) => ({ ...serializeLocation(r), promptFragment: r.promptFragment })));
+  res.json(rows.map((r) => ({ ...serializeLocation(r), promptFragment: r.promptFragment, prompts: r.prompts ?? [] })));
 });
 
 const LocationCreateSchema = z.object({
@@ -125,6 +125,7 @@ const LocationCreateSchema = z.object({
   name: z.string().min(1),
   previewImageUrl: z.string().default(""),
   promptFragment: z.string().default(""),
+  prompts: z.array(z.string()).default([]),
   sortOrder: z.number().int().default(0),
   isActive: z.boolean().default(true),
 });

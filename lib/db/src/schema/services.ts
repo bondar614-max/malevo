@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, integer, boolean, timestamp, numeric } from "drizzle-orm/pg-core";
+import { pgTable, uuid, varchar, text, integer, boolean, timestamp, numeric, jsonb } from "drizzle-orm/pg-core";
 
 export const servicesTable = pgTable("services", {
   key: varchar("key", { length: 64 }).primaryKey(),
@@ -25,6 +25,7 @@ export const locationsTable = pgTable("locations", {
   name: varchar("name", { length: 255 }).notNull(),
   previewImageUrl: varchar("preview_image_url", { length: 500 }).notNull().default(""),
   promptFragment: text("prompt_fragment").notNull().default(""),
+  prompts: jsonb("prompts").$type<string[]>().notNull().default([]),
   sortOrder: integer("sort_order").notNull().default(0),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

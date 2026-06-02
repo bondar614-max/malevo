@@ -27,7 +27,7 @@ interface ServiceRow {
 }
 interface LocationRow {
   id: string; serviceKey: string; name: string; previewImageUrl: string;
-  promptFragment: string; sortOrder: number; isActive: boolean;
+  promptFragment: string; prompts: string[]; sortOrder: number; isActive: boolean;
 }
 interface TariffRow {
   id: string; name: string; description: string; price: number;
@@ -988,7 +988,7 @@ function LocationsTab() {
             {services.map((s) => <option key={s.key} value={s.key}>{s.title}</option>)}
           </select>
           <Button
-            onClick={() => setEditing({ id: "", serviceKey: activeService, name: "", previewImageUrl: "", promptFragment: "", sortOrder: (rows?.length ?? 0) + 1, isActive: true })}
+            onClick={() => setEditing({ id: "", serviceKey: activeService, name: "", previewImageUrl: "", promptFragment: "", prompts: [""], sortOrder: (rows?.length ?? 0) + 1, isActive: true })}
             className="bg-gradient-primary text-white border-0"
           >
             <Plus size={16} className="mr-2" /> Добавить
@@ -1010,7 +1010,11 @@ function LocationsTab() {
               </div>
               <div className="p-4 flex-1 flex flex-col gap-2">
                 <div className="font-semibold text-white truncate">{l.name}</div>
-                <div className="text-xs text-muted-foreground line-clamp-2 flex-1">{l.promptFragment}</div>
+                <div className="text-xs text-muted-foreground line-clamp-2 flex-1">
+                  {(l.prompts?.filter((p) => p.trim()).length ?? 0) > 0
+                    ? `Промптов: ${l.prompts.filter((p) => p.trim()).length}`
+                    : (l.promptFragment || "Промпты не заданы")}
+                </div>
                 <div className="flex gap-2 pt-2">
                   <Button size="sm" variant="outline" onClick={() => setEditing(l)} className="flex-1 border-border text-white">
                     <Pencil size={14} className="mr-1" /> Изм.
@@ -1044,8 +1048,23 @@ function LocationEditor({ initial, onClose, onSaved }: { initial: LocationRow; o
 
   function upd<K extends keyof LocationRow>(k: K, v: LocationRow[K]) { setForm((p) => ({ ...p, [k]: v })); }
 
+  const prompts = form.prompts ?? [];
+  function setPrompt(i: number, v: string) {
+    setForm((p) => ({ ...p, prompts: (p.prompts ?? []).map((x, idx) => (idx === i ? v : x)) }));
+  }
+  function addPrompt() { setForm((p) => ({ ...p, prompts: [...(p.prompts ?? []), ""] })); }
+  function removePrompt(i: number) {
+    setForm((p) => ({ ...p, prompts: (p.prompts ?? []).filter((_, idx) => idx !== i) }));
+  }
+
   async function save() {
     setSaving(true); setErr(null);
+    const cleanPrompts = (form.prompts ?? []).map((p) => p.trim()).filter(Boolean);
+    if (cleanPrompts.length === 0) {
+      setErr("Добавьте хотя бы один промпт");
+      setSaving(false);
+      return;
+    }
     try {
       if (isNew) {
         await apiFetch("/admin/locations", {
@@ -1055,6 +1074,7 @@ function LocationEditor({ initial, onClose, onSaved }: { initial: LocationRow; o
             name: form.name,
             previewImageUrl: form.previewImageUrl,
             promptFragment: form.promptFragment,
+            prompts: cleanPrompts,
             sortOrder: Number(form.sortOrder),
             isActive: form.isActive,
           }),
@@ -1066,6 +1086,7 @@ function LocationEditor({ initial, onClose, onSaved }: { initial: LocationRow; o
             name: form.name,
             previewImageUrl: form.previewImageUrl,
             promptFragment: form.promptFragment,
+            prompts: cleanPrompts,
             sortOrder: Number(form.sortOrder),
             isActive: form.isActive,
           }),
@@ -1090,9 +1111,36 @@ function LocationEditor({ initial, onClose, onSaved }: { initial: LocationRow; o
             <Input value={form.name} onChange={(e) => upd("name", e.target.value)} className="mt-1 bg-secondary border-border text-white" placeholder="Например: Уютное кафе" />
           </div>
           <div>
-            <Label className="text-white text-sm">Фрагмент промпта (англ.)</Label>
-            <Textarea value={form.promptFragment} onChange={(e) => upd("promptFragment", e.target.value)} rows={3} className="mt-1 bg-secondary border-border text-white font-mono text-xs" placeholder="sitting in a cozy modern cafe with warm lighting..." />
-            <div className="text-xs text-muted-foreground mt-1">Добавится в конец промпта услуги.</div>
+            <Label className="text-white text-sm">Промпты для генерации (англ.)</Label>
+            <div className="text-xs text-muted-foreground mt-1 mb-2">
+              Можно добавить несколько промптов — для каждого фото случайно выбирается один. Используйте {"{item}"} и {"{age}"} — подставятся название одежды и возраст (если не указать, добавятся в конец автоматически).
+            </div>
+            <div className="space-y-2">
+              {prompts.map((p, i) => (
+                <div key={i} className="flex gap-2 items-start">
+                  <Textarea
+                    value={p}
+                    onChange={(e) => setPrompt(i, e.target.value)}
+                    rows={3}
+                    className="flex-1 bg-secondary border-border text-white font-mono text-xs"
+                    placeholder="woman taking a mirror selfie in a modern apartment wearing {item}, casual amateur smartphone photo..."
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={() => removePrompt(i)}
+                    disabled={prompts.length <= 1}
+                    className="border-border text-red-400 shrink-0"
+                  >
+                    <Trash2 size={14} />
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <Button type="button" variant="outline" size="sm" onClick={addPrompt} className="mt-2 border-border text-white">
+              <Plus size={14} className="mr-1" /> Добавить промпт
+            </Button>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
