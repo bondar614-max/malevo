@@ -399,7 +399,7 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
                 const taskId = await kieCreateNanoBananaProTask({
                   prompt,
                   imageUrls: inputUrls,
-                  aspectRatio: "auto",
+                  aspectRatio: "3:4",
                   resolution: "2K",
                 });
                 const resultUrl = await waitForKieResult(taskId);
