@@ -19,6 +19,7 @@ function publicBaseUrl(): string {
 
 interface N8nForwardInput {
   generationId: string;
+  email: string;
   item: string;
   gender: string;
   age: string;
@@ -39,6 +40,7 @@ async function forwardReviewToN8n(input: N8nForwardInput): Promise<void> {
 
   const payload = {
     generation_id: input.generationId,
+    email: input.email,
     item: input.item,
     gender: input.gender,
     age: input.age,
@@ -379,6 +381,7 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
         try {
           await forwardReviewToN8n({
             generationId: orderId,
+            email: user.email,
             item: reviewItem,
             gender: reviewGender,
             age: reviewAge,
