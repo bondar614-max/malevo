@@ -3,8 +3,8 @@ import multer from "multer";
 import { db, ordersTable, stylesTable, usersTable, servicesTable, locationsTable } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
 import { requireAuth } from "../lib/auth";
-import { kieUploadFile, kieCreateNanoBananaProTask, kieGetTask } from "../lib/kie";
 import { uploadBufferToStorage } from "../lib/storage-helpers";
+import { generateImages, getCategoryModel, type GenImage } from "../lib/imageGen";
 
 const REVIEW_AGES = new Set(["21-30", "30-45", "45+", "random"]);
 const MAX_SETS = 10;
@@ -45,26 +45,6 @@ const POSE_VARIATIONS = [
   "Same person, same face, same clothing and same setting as the reference image, but show a new DISTINCT pose: different gesture, different angle and different expression from before. Natural, candid amateur smartphone shot.",
 ];
 
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
-/** Poll a kie task until it succeeds (returns first url), fails (null) or times out (null). */
-async function waitForKieResult(taskId: string): Promise<string | null> {
-  const deadline = Date.now() + 8 * 60 * 1000;
-  while (Date.now() < deadline) {
-    let info;
-    try {
-      info = await kieGetTask(taskId);
-    } catch {
-      await sleep(5000);
-      continue;
-    }
-    if (info.state === "success" && info.resultUrls.length > 0) return info.resultUrls[0]!;
-    if (info.state === "fail") return null;
-    await sleep(5000);
-  }
-  return null;
-}
-
 /**
  * Atomically append one url to an order's resultPhotos jsonb array (safe under
  * concurrency). Guarded on status='processing' so a late chain result can never
@@ -75,22 +55,6 @@ async function appendResultPhoto(orderId: string, url: string): Promise<void> {
     .update(ordersTable)
     .set({ resultPhotos: sql`${ordersTable.resultPhotos} || ${JSON.stringify([url])}::jsonb` })
     .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "processing")));
-}
-
-async function mirrorRemoteImage(url: string, log: { error: (o: object, m?: string) => void }): Promise<string> {
-  try {
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), 60_000);
-    const r = await fetch(url, { signal: ac.signal });
-    clearTimeout(t);
-    if (!r.ok) throw new Error(`fetch ${r.status}`);
-    const ct = (r.headers.get("content-type") ?? "image/png").split(";")[0]!.trim();
-    const buf = Buffer.from(await r.arrayBuffer());
-    return await uploadBufferToStorage(buf, ct, "generated");
-  } catch (err) {
-    log.error({ err, url }, "mirror failed; using upstream url");
-    return url;
-  }
 }
 
 const router: IRouter = Router();
@@ -179,39 +143,49 @@ router.post("/generate", requireAuth, upload.array("photos", 3), async (req, res
       }
     }
 
-    try {
-      const uploadedUrls: string[] = [];
-      for (let i = 0; i < files.length; i++) {
-        const f = files[i]!;
-        const safeName = `${userId}_${Date.now()}_${i}.${f.mimetype.split("/")[1] ?? "png"}`;
-        const url = await kieUploadFile(f.buffer, safeName, f.mimetype);
-        uploadedUrls.push(url);
+    // Snapshot input buffers for the async job (multer memory storage).
+    const styleInputs: GenImage[] = files.map((f) => ({ buffer: f.buffer, mime: f.mimetype }));
+    const stylePrompt = style.prompt;
+
+    // Respond immediately; generate in the background and let the status
+    // endpoint surface the DB state (uniform across all providers/categories).
+    res.status(201).json({ orderId, status: "processing" });
+
+    void (async () => {
+      try {
+        const model = await getCategoryModel("styles");
+        const srcUrls: string[] = [];
+        for (const im of styleInputs) {
+          try { srcUrls.push(await uploadBufferToStorage(im.buffer, im.mime, "source")); } catch { /* non-fatal */ }
+        }
+        const imgs = await generateImages({ model, prompt: stylePrompt, inputs: styleInputs, log: req.log });
+        if (imgs.length === 0) {
+          await refundAndFail("Не удалось сгенерировать фото");
+          return;
+        }
+        const urls = await Promise.all(imgs.map((i) => uploadBufferToStorage(i.buffer, i.mime, "generated")));
+        const ok = await db
+          .update(ordersTable)
+          .set({
+            sourcePhotoUrl: srcUrls[0] ?? null,
+            sourcePhotos: srcUrls,
+            resultPhotos: urls,
+            status: "success",
+            completedAt: new Date(),
+          })
+          .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "processing")))
+          .returning({ id: ordersTable.id });
+        if (ok.length > 0) {
+          await db
+            .update(stylesTable)
+            .set({ ordersCount: sql`${stylesTable.ordersCount} + 1` })
+            .where(eq(stylesTable.id, styleId));
+        }
+      } catch (err) {
+        req.log.error({ err, orderId }, "style generation failed; refunding");
+        await refundAndFail(err instanceof Error ? err.message : "Не удалось сгенерировать фото");
       }
-
-      const taskId = await kieCreateNanoBananaProTask({
-        prompt: style.prompt,
-        imageUrls: uploadedUrls,
-        aspectRatio: "3:4",
-        resolution: "2K",
-      });
-
-      await db
-        .update(ordersTable)
-        .set({ sourcePhotoUrl: uploadedUrls[0] ?? null, sourcePhotos: uploadedUrls, kieTaskId: taskId })
-        .where(eq(ordersTable.id, orderId));
-
-      await db
-        .update(stylesTable)
-        .set({ ordersCount: sql`${stylesTable.ordersCount} + 1` })
-        .where(eq(stylesTable.id, styleId));
-
-      res.status(201).json({ orderId, taskId, status: "processing" });
-    } catch (err) {
-      req.log.error({ err, orderId }, "generation kickoff failed; refunding");
-      await refundAndFail(err instanceof Error ? err.message : "Не удалось запустить генерацию");
-      const msg = err instanceof Error ? err.message : "Не удалось запустить генерацию";
-      res.status(502).json({ error: msg, refunded: true });
-    }
+    })();
   } catch (err) {
     req.log.error({ err }, "generate failed");
     const msg = err instanceof Error ? err.message : "Generation failed";
@@ -365,19 +339,19 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
     // forcing a clearly different pose. Sets run as independent concurrent chains.
     if (isReview) {
       // Snapshot buffers/metadata for the async kickoff (multer memory storage).
-      const reviewFiles = files.map((f) => ({ buffer: f.buffer, mimetype: f.mimetype }));
+      const reviewFiles: GenImage[] = files.map((f) => ({ buffer: f.buffer, mime: f.mimetype }));
 
       // Respond immediately; run the chains in the background.
       res.status(201).json({ orderId, status: "processing" });
 
       void (async () => {
         try {
-          // Upload the source photo(s) to kie once; reuse as the seed for every chain.
+          const model = await getCategoryModel("review");
+
+          // Store the source photo(s) in our storage for the order record.
           const seedUrls: string[] = [];
-          for (let i = 0; i < reviewFiles.length; i++) {
-            const rf = reviewFiles[i]!;
-            const safeName = `${userId}_${Date.now()}_${i}.${rf.mimetype.split("/")[1] ?? "png"}`;
-            seedUrls.push(await kieUploadFile(rf.buffer, safeName, rf.mimetype));
+          for (const rf of reviewFiles) {
+            try { seedUrls.push(await uploadBufferToStorage(rf.buffer, rf.mime, "source")); } catch { /* non-fatal */ }
           }
 
           await db
@@ -389,25 +363,20 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
           // chain — other chains keep producing photos.
           const runChain = async (): Promise<void> => {
             try {
-              let inputUrls = seedUrls;
+              let inputs: GenImage[] = reviewFiles;
               for (let step = 0; step < PHOTOS_PER_SET; step++) {
                 const locPrompt = pickRandom(reviewPromptPool);
                 let prompt = composeReviewPrompt(service.prompt, locPrompt, reviewItem, reviewAge);
                 if (step > 0) {
                   prompt += " " + POSE_VARIATIONS[(step - 1) % POSE_VARIATIONS.length]!;
                 }
-                const taskId = await kieCreateNanoBananaProTask({
-                  prompt,
-                  imageUrls: inputUrls,
-                  aspectRatio: "3:4",
-                  resolution: "2K",
-                });
-                const resultUrl = await waitForKieResult(taskId);
-                if (!resultUrl) return; // step failed/timed out; stop this chain
-                const mirrored = await mirrorRemoteImage(resultUrl, req.log);
-                await appendResultPhoto(orderId, mirrored);
-                // The next photo is generated FROM this one (kie-hosted result url).
-                inputUrls = [resultUrl];
+                const imgs = await generateImages({ model, prompt, inputs, log: req.log });
+                const first = imgs[0];
+                if (!first) return; // step failed/timed out; stop this chain
+                const url = await uploadBufferToStorage(first.buffer, first.mime, "generated");
+                await appendResultPhoto(orderId, url);
+                // The next photo is generated FROM this one.
+                inputs = [first];
               }
             } catch (err) {
               req.log.error({ err, orderId }, "review chain failed");
@@ -436,39 +405,42 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
       return;
     }
 
-    // ===== Non-review services: existing kie.ai flow =====
-    try {
-      const uploadedUrls: string[] = [];
-      for (let i = 0; i < files.length; i++) {
-        const f = files[i]!;
-        const safeName = `${userId}_${Date.now()}_${i}.${f.mimetype.split("/")[1] ?? "png"}`;
-        const url = await kieUploadFile(f.buffer, safeName, f.mimetype);
-        uploadedUrls.push(url);
+    // ===== Non-review services: background generation via configured model =====
+    const serviceInputs: GenImage[] = files.map((f) => ({ buffer: f.buffer, mime: f.mimetype }));
+    const finalPrompt = locationFragment
+      ? `${service.prompt} Setting: ${locationFragment}.`
+      : service.prompt;
+
+    res.status(201).json({ orderId, status: "processing" });
+
+    void (async () => {
+      try {
+        const model = await getCategoryModel("photoshoot");
+        const srcUrls: string[] = [];
+        for (const im of serviceInputs) {
+          try { srcUrls.push(await uploadBufferToStorage(im.buffer, im.mime, "source")); } catch { /* non-fatal */ }
+        }
+        const imgs = await generateImages({ model, prompt: finalPrompt, inputs: serviceInputs, log: req.log });
+        if (imgs.length === 0) {
+          await refundAndFail("Не удалось сгенерировать фото");
+          return;
+        }
+        const urls = await Promise.all(imgs.map((i) => uploadBufferToStorage(i.buffer, i.mime, "generated")));
+        await db
+          .update(ordersTable)
+          .set({
+            sourcePhotoUrl: srcUrls[0] ?? null,
+            sourcePhotos: srcUrls,
+            resultPhotos: urls,
+            status: "success",
+            completedAt: new Date(),
+          })
+          .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "processing")));
+      } catch (err) {
+        req.log.error({ err, orderId }, "service generation failed; refunding");
+        await refundAndFail(err instanceof Error ? err.message : "Не удалось сгенерировать фото");
       }
-
-      const finalPrompt = locationFragment
-        ? `${service.prompt} Setting: ${locationFragment}.`
-        : service.prompt;
-
-      const taskId = await kieCreateNanoBananaProTask({
-        prompt: finalPrompt,
-        imageUrls: uploadedUrls,
-        aspectRatio: "3:4",
-        resolution: "2K",
-      });
-
-      await db
-        .update(ordersTable)
-        .set({ sourcePhotoUrl: uploadedUrls[0] ?? null, sourcePhotos: uploadedUrls, kieTaskId: taskId })
-        .where(eq(ordersTable.id, orderId));
-
-      res.status(201).json({ orderId, taskId, status: "processing" });
-    } catch (err) {
-      req.log.error({ err, orderId }, "service generation kickoff failed; refunding");
-      await refundAndFail(err instanceof Error ? err.message : "Не удалось запустить генерацию");
-      const msg = err instanceof Error ? err.message : "Не удалось запустить генерацию";
-      res.status(502).json({ error: msg, refunded: true });
-    }
+    })();
   } catch (err) {
     req.log.error({ err }, "service generate failed");
     const msg = err instanceof Error ? err.message : "Generation failed";
@@ -520,63 +492,25 @@ router.get("/generate/:orderId/status", requireAuth, async (req, res) => {
     return true;
   }
 
-  // Review orders are driven by a background sequential-chain job that writes
-  // resultPhotos incrementally and sets the final status. Here we just surface
-  // the current DB state, with a timeout safety net in case the background
-  // worker died (e.g. a server restart mid-generation).
-  if (order.serviceKey === "review") {
-    const aged = Date.now() - order.createdAt.getTime() > STUCK_TASK_MS;
-    if (aged && order.status === "processing") {
-      if ((order.resultPhotos?.length ?? 0) > 0) {
-        await db
-          .update(ordersTable)
-          .set({ status: "success", completedAt: new Date() })
-          .where(and(eq(ordersTable.id, order.id), eq(ordersTable.status, "processing")));
-        res.json({ orderId: order.id, status: "success", resultPhotos: order.resultPhotos ?? [] });
-        return;
-      }
-      await failAndRefund("Превышено время ожидания генерации");
-      res.json({ orderId: order.id, status: "failed", errorMessage: "Превышено время ожидания генерации", refunded: true });
+  // All generation is background-driven: the worker writes resultPhotos and sets
+  // the final status. Here we surface the current DB state, with a timeout safety
+  // net in case the worker died (e.g. a server restart mid-generation).
+  const aged = Date.now() - order.createdAt.getTime() > STUCK_TASK_MS;
+  if (aged && order.status === "processing") {
+    if ((order.resultPhotos?.length ?? 0) > 0) {
+      await db
+        .update(ordersTable)
+        .set({ status: "success", completedAt: new Date() })
+        .where(and(eq(ordersTable.id, order.id), eq(ordersTable.status, "processing")));
+      res.json({ orderId: order.id, status: "success", resultPhotos: order.resultPhotos ?? [] });
       return;
     }
-    res.json({ orderId: order.id, status: order.status, resultPhotos: order.resultPhotos ?? [] });
-    return;
-  }
-
-  const ageMs = Date.now() - order.createdAt.getTime();
-  if (ageMs > STUCK_TASK_MS) {
     await failAndRefund("Превышено время ожидания генерации");
     res.json({ orderId: order.id, status: "failed", errorMessage: "Превышено время ожидания генерации", refunded: true });
     return;
   }
 
-  if (!order.kieTaskId) {
-    res.json({ orderId: order.id, status: order.status, resultPhotos: order.resultPhotos ?? [] });
-    return;
-  }
-
-  try {
-    const info = await kieGetTask(order.kieTaskId);
-    if (info.state === "success" && info.resultUrls.length > 0) {
-      const mirrored = await Promise.all(info.resultUrls.map((u) => mirrorRemoteImage(u, req.log)));
-      await db
-        .update(ordersTable)
-        .set({ status: "success", resultPhotos: mirrored, completedAt: new Date() })
-        .where(and(eq(ordersTable.id, order.id), eq(ordersTable.status, "processing")));
-      res.json({ orderId: order.id, status: "success", resultPhotos: mirrored });
-      return;
-    }
-    if (info.state === "fail") {
-      const errMsg = info.errorMessage ?? "Generation failed";
-      const didRefund = await failAndRefund(errMsg);
-      res.json({ orderId: order.id, status: "failed", errorMessage: errMsg, refunded: didRefund });
-      return;
-    }
-    res.json({ orderId: order.id, status: "processing", resultPhotos: [] });
-  } catch (err) {
-    req.log.error({ err, taskId: order.kieTaskId }, "kie status check failed");
-    res.json({ orderId: order.id, status: "processing", resultPhotos: [] });
-  }
+  res.json({ orderId: order.id, status: order.status, resultPhotos: order.resultPhotos ?? [] });
 });
 
 export default router;

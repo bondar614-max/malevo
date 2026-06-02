@@ -1,3 +1,4 @@
 - [OpenAI/OpenRouter key handling](openrouter-key.md) — project's OPENAI_API_KEY is an OpenRouter key (sk-or-); client switches base URL + model namespace by prefix.
-- [Review generation flow](review-generation-flow.md) — "review" service generates directly via kie.ai (no n8n); per-location prompt pools, one kie task per photo, refund only on zero photos.
+- [Review generation flow](review-generation-flow.md) — "review" generates via the admin-configured model (kie.ai/OpenRouter), no n8n; per-location prompt pools, sequential pose-chain per set, refund only on zero photos.
+- [Image generation providers](image-generation-providers.md) — model is selectable per category (app_settings); kie:* → kie.ai, else OpenRouter; all flows background+DB-status driven.
 - [kie.ai image-to-image input](kie-image-input.md) — image_input must be kie-hosted (kieUploadFile); our /api/storage paths won't work. Read bytes via downloadStorageObject first.
