@@ -21,9 +21,12 @@ export interface GenImage {
   mime: string;
 }
 
+export type GenProvider = "kie" | "openrouter";
+
 export interface ModelOption {
   id: string;
   name: string;
+  provider: GenProvider;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -86,7 +89,9 @@ export async function setCategoryModel(category: GenCategory, model: string): Pr
  * live, so the admin is never limited to a hardcoded list).
  */
 export async function listImageModels(): Promise<ModelOption[]> {
-  const out: ModelOption[] = [{ id: DEFAULT_MODEL, name: "Nano Banana Pro (kie.ai)" }];
+  const out: ModelOption[] = [
+    { id: DEFAULT_MODEL, name: "Nano Banana Pro", provider: "kie" },
+  ];
   const key = process.env["OPENAI_API_KEY"];
   if (!key) return out;
   try {
@@ -102,9 +107,9 @@ export async function listImageModels(): Promise<ModelOption[]> {
     const json = (await res.json()) as {
       data?: Array<{ id: string; name?: string; architecture?: { output_modalities?: string[] } }>;
     };
-    const models = (json.data ?? [])
+    const models: ModelOption[] = (json.data ?? [])
       .filter((m) => (m.architecture?.output_modalities ?? []).includes("image"))
-      .map((m) => ({ id: m.id, name: m.name ?? m.id }))
+      .map((m) => ({ id: m.id, name: m.name ?? m.id, provider: "openrouter" as const }))
       .sort((a, b) => a.name.localeCompare(b.name));
     out.push(...models);
   } catch (err) {
