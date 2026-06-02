@@ -1167,7 +1167,8 @@ function LocationEditor({ initial, onClose, onSaved }: { initial: LocationRow; o
 }
 
 // ===== AI Models Tab =====
-interface ModelOption { id: string; name: string; }
+type GenProvider = "kie" | "openrouter";
+interface ModelOption { id: string; name: string; provider: GenProvider; }
 interface AiSettings { styles: string; photoshoot: string; review: string; }
 
 const AI_CATEGORIES: Array<{ key: keyof AiSettings; label: string; desc: string }> = [
@@ -1176,6 +1177,15 @@ const AI_CATEGORIES: Array<{ key: keyof AiSettings; label: string; desc: string 
   { key: "review", label: "Фото для отзывов", desc: "Модель для генерации фото-отзывов" },
 ];
 
+const PROVIDERS: Array<{ key: GenProvider; label: string; desc: string }> = [
+  { key: "kie", label: "kie.ai", desc: "Стабильный сервис (Nano Banana Pro)" },
+  { key: "openrouter", label: "OpenRouter", desc: "Сотни моделей разных провайдеров" },
+];
+
+function providerOf(modelId: string): GenProvider {
+  return modelId.startsWith("kie:") ? "kie" : "openrouter";
+}
+
 function AiModelsTab() {
   const [models, setModels] = useState<ModelOption[]>([]);
   const [settings, setSettings] = useState<AiSettings | null>(null);
@@ -1183,6 +1193,11 @@ function AiModelsTab() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState(false);
+  const [providerByCat, setProviderByCat] = useState<Record<keyof AiSettings, GenProvider>>({
+    styles: "kie",
+    photoshoot: "kie",
+    review: "kie",
+  });
 
   useEffect(() => {
     (async () => {
@@ -1193,6 +1208,11 @@ function AiModelsTab() {
         ]);
         setModels(m);
         setSettings(s);
+        setProviderByCat({
+          styles: providerOf(s.styles),
+          photoshoot: providerOf(s.photoshoot),
+          review: providerOf(s.review),
+        });
       } catch (e) {
         setErr(e instanceof Error ? e.message : "Ошибка загрузки");
       } finally {
@@ -1230,26 +1250,70 @@ function AiModelsTab() {
       <div className="mb-6">
         <h2 className="text-3xl font-bold text-white">ИИ-модели</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Выберите ИИ-модель отдельно для каждой категории генерации. Список моделей подгружается из OpenRouter в реальном времени, плюс модель kie.ai по умолчанию.
+          Для каждой категории сначала выберите сервис генерации (kie.ai или OpenRouter), затем конкретную модель. Список моделей OpenRouter подгружается в реальном времени.
         </p>
       </div>
 
       {err && <div className="text-sm rounded-lg p-3 border text-red-400 bg-red-500/10 border-red-500/30 mb-4">{err}</div>}
 
       <div className="space-y-5 max-w-2xl">
-        {AI_CATEGORIES.map((cat) => (
-          <div key={cat.key} className="bg-card border border-border rounded-xl p-5">
-            <div className="mb-3">
-              <div className="font-semibold text-white">{cat.label}</div>
-              <div className="text-xs text-muted-foreground">{cat.desc}</div>
+        {AI_CATEGORIES.map((cat) => {
+          const value = settings?.[cat.key] ?? "";
+          const provider = providerByCat[cat.key];
+          const providerModels = models.filter((m) => m.provider === provider);
+
+          const setProvider = (p: GenProvider) => {
+            if (p === provider) return;
+            setProviderByCat((m) => ({ ...m, [cat.key]: p }));
+            const first = models.find((mm) => mm.provider === p);
+            if (first) setSettings((s) => (s ? { ...s, [cat.key]: first.id } : s));
+          };
+
+          return (
+            <div key={cat.key} className="bg-card border border-border rounded-xl p-5">
+              <div className="mb-3">
+                <div className="font-semibold text-white">{cat.label}</div>
+                <div className="text-xs text-muted-foreground">{cat.desc}</div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                {PROVIDERS.map((p) => {
+                  const active = provider === p.key;
+                  return (
+                    <button
+                      key={p.key}
+                      type="button"
+                      onClick={() => setProvider(p.key)}
+                      className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                        active
+                          ? "border-primary bg-primary/10 text-white"
+                          : "border-border bg-secondary text-muted-foreground hover:border-primary/40"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-semibold">{p.label}</span>
+                        {active && <Check size={15} className="text-primary shrink-0" />}
+                      </div>
+                      <div className="text-[11px] leading-tight mt-0.5">{p.desc}</div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {providerModels.length > 0 ? (
+                <ModelSelect
+                  models={providerModels}
+                  value={value}
+                  onChange={(v) => setSettings((s) => (s ? { ...s, [cat.key]: v } : s))}
+                />
+              ) : (
+                <div className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+                  Нет доступных моделей OpenRouter. Проверьте, что задан ключ OpenRouter.
+                </div>
+              )}
             </div>
-            <ModelSelect
-              models={models}
-              value={settings?.[cat.key] ?? ""}
-              onChange={(v) => setSettings((s) => (s ? { ...s, [cat.key]: v } : s))}
-            />
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="mt-6 flex items-center gap-3 max-w-2xl">
