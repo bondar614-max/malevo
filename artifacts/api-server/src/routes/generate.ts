@@ -191,7 +191,7 @@ router.post("/generate", requireAuth, upload.array("photos", 3), async (req, res
       const taskId = await kieCreateNanoBananaProTask({
         prompt: style.prompt,
         imageUrls: uploadedUrls,
-        aspectRatio: "auto",
+        aspectRatio: "3:4",
         resolution: "2K",
       });
 
@@ -453,7 +453,7 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
       const taskId = await kieCreateNanoBananaProTask({
         prompt: finalPrompt,
         imageUrls: uploadedUrls,
-        aspectRatio: "auto",
+        aspectRatio: "3:4",
         resolution: "2K",
       });
 
