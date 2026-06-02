@@ -9,6 +9,17 @@ function apiKey(): string {
   return k;
 }
 
+/** fetch with a hard timeout so background chains can never hang indefinitely. */
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: ac.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 export interface KieUploadResult {
   url: string;
 }
@@ -28,11 +39,15 @@ export async function kieUploadFile(
   form.append("uploadPath", "images/photogen");
   form.append("fileName", filename);
 
-  const res = await fetch(`${KIE_UPLOAD_BASE}/api/file-stream-upload`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey()}` },
-    body: form,
-  });
+  const res = await fetchWithTimeout(
+    `${KIE_UPLOAD_BASE}/api/file-stream-upload`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey()}` },
+      body: form,
+    },
+    120_000,
+  );
   const json = (await res.json()) as {
     success?: boolean;
     code?: number;
@@ -76,14 +91,18 @@ export async function kieCreateNanoBananaProTask(input: KieCreateTaskInput): Pro
     model: "nano-banana-pro",
     input: inner,
   };
-  const res = await fetch(`${KIE_BASE}/api/v1/jobs/createTask`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey()}`,
-      "Content-Type": "application/json",
+  const res = await fetchWithTimeout(
+    `${KIE_BASE}/api/v1/jobs/createTask`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey()}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
     },
-    body: JSON.stringify(body),
-  });
+    60_000,
+  );
   const json = (await res.json()) as { code?: number; msg?: string; data?: { taskId?: string } };
   if (!res.ok || json.code !== 200 || !json.data?.taskId) {
     logger.error({ json }, "kie createTask failed");
@@ -103,9 +122,11 @@ export interface KieTaskInfo {
 
 /** Query a task by ID. Maps kie.ai's record-info response to a simple shape. */
 export async function kieGetTask(taskId: string): Promise<KieTaskInfo> {
-  const res = await fetch(`${KIE_BASE}/api/v1/jobs/recordInfo?taskId=${encodeURIComponent(taskId)}`, {
-    headers: { Authorization: `Bearer ${apiKey()}` },
-  });
+  const res = await fetchWithTimeout(
+    `${KIE_BASE}/api/v1/jobs/recordInfo?taskId=${encodeURIComponent(taskId)}`,
+    { headers: { Authorization: `Bearer ${apiKey()}` } },
+    30_000,
+  );
   const json = (await res.json()) as {
     code?: number;
     msg?: string;

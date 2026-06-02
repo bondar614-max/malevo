@@ -37,6 +37,46 @@ function composeReviewPrompt(basePrompt: string, locationPrompt: string, item: s
   return [basePrompt.trim(), p.trim(), ...extras].filter(Boolean).join(" ").trim();
 }
 
+// Pose directives appended on each chained step so every subsequent photo shows
+// a clearly different pose while keeping the same person, outfit and location.
+const POSE_VARIATIONS = [
+  "Keep the exact same person, same face, same outfit and the same location as in the reference image, but change to a clearly DIFFERENT pose: different body angle, different position of arms and hands, different head tilt and a slightly different facial expression. Natural, candid amateur smartphone shot.",
+  "Same person, same face, same outfit and same place as the reference image, but use yet another DIFFERENT pose and camera angle: shift the stance and weight, reposition the arms, change the framing. Natural, candid amateur smartphone shot.",
+  "Same person, same face, same clothing and same setting as the reference image, but show a new DISTINCT pose: different gesture, different angle and different expression from before. Natural, candid amateur smartphone shot.",
+];
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** Poll a kie task until it succeeds (returns first url), fails (null) or times out (null). */
+async function waitForKieResult(taskId: string): Promise<string | null> {
+  const deadline = Date.now() + 8 * 60 * 1000;
+  while (Date.now() < deadline) {
+    let info;
+    try {
+      info = await kieGetTask(taskId);
+    } catch {
+      await sleep(5000);
+      continue;
+    }
+    if (info.state === "success" && info.resultUrls.length > 0) return info.resultUrls[0]!;
+    if (info.state === "fail") return null;
+    await sleep(5000);
+  }
+  return null;
+}
+
+/**
+ * Atomically append one url to an order's resultPhotos jsonb array (safe under
+ * concurrency). Guarded on status='processing' so a late chain result can never
+ * be written to an order the timeout safety net already failed/refunded.
+ */
+async function appendResultPhoto(orderId: string, url: string): Promise<void> {
+  await db
+    .update(ordersTable)
+    .set({ resultPhotos: sql`${ordersTable.resultPhotos} || ${JSON.stringify([url])}::jsonb` })
+    .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "processing")));
+}
+
 async function mirrorRemoteImage(url: string, log: { error: (o: object, m?: string) => void }): Promise<string> {
   try {
     const ac = new AbortController();
@@ -319,48 +359,75 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
       }
     }
 
-    // ===== Review: generate directly via kie.ai, one task per photo =====
+    // ===== Review: generate via kie.ai as a sequential chain per set =====
+    // Each set is a chain of PHOTOS_PER_SET photos: photo 1 is generated from the
+    // uploaded source, photo 2 from photo 1, photo 3 from photo 2 — each step
+    // forcing a clearly different pose. Sets run as independent concurrent chains.
     if (isReview) {
       // Snapshot buffers/metadata for the async kickoff (multer memory storage).
       const reviewFiles = files.map((f) => ({ buffer: f.buffer, mimetype: f.mimetype }));
 
-      // Respond immediately; create kie.ai tasks in the background.
+      // Respond immediately; run the chains in the background.
       res.status(201).json({ orderId, status: "processing" });
 
       void (async () => {
         try {
-          // Upload source photo(s) once; reuse the URLs for every task.
-          const uploadedUrls: string[] = [];
+          // Upload the source photo(s) to kie once; reuse as the seed for every chain.
+          const seedUrls: string[] = [];
           for (let i = 0; i < reviewFiles.length; i++) {
             const rf = reviewFiles[i]!;
             const safeName = `${userId}_${Date.now()}_${i}.${rf.mimetype.split("/")[1] ?? "png"}`;
-            const url = await kieUploadFile(rf.buffer, safeName, rf.mimetype);
-            uploadedUrls.push(url);
+            seedUrls.push(await kieUploadFile(rf.buffer, safeName, rf.mimetype));
           }
 
           await db
             .update(ordersTable)
-            .set({ sourcePhotoUrl: uploadedUrls[0] ?? null, sourcePhotos: uploadedUrls })
+            .set({ sourcePhotoUrl: seedUrls[0] ?? null, sourcePhotos: seedUrls })
             .where(eq(ordersTable.id, orderId));
 
-          // One task per expected photo, each with a randomly chosen prompt.
-          const taskIds: string[] = [];
-          for (let i = 0; i < expectedPhotos; i++) {
-            const chosen = pickRandom(reviewPromptPool);
-            const prompt = composeReviewPrompt(service.prompt, chosen, reviewItem, reviewAge);
-            const taskId = await kieCreateNanoBananaProTask({
-              prompt,
-              imageUrls: uploadedUrls,
-              aspectRatio: "auto",
-              resolution: "2K",
-            });
-            taskIds.push(taskId);
+          // One sequential chain per set. Errors inside a chain stop only that
+          // chain — other chains keep producing photos.
+          const runChain = async (): Promise<void> => {
+            try {
+              let inputUrls = seedUrls;
+              for (let step = 0; step < PHOTOS_PER_SET; step++) {
+                const locPrompt = pickRandom(reviewPromptPool);
+                let prompt = composeReviewPrompt(service.prompt, locPrompt, reviewItem, reviewAge);
+                if (step > 0) {
+                  prompt += " " + POSE_VARIATIONS[(step - 1) % POSE_VARIATIONS.length]!;
+                }
+                const taskId = await kieCreateNanoBananaProTask({
+                  prompt,
+                  imageUrls: inputUrls,
+                  aspectRatio: "auto",
+                  resolution: "2K",
+                });
+                const resultUrl = await waitForKieResult(taskId);
+                if (!resultUrl) return; // step failed/timed out; stop this chain
+                const mirrored = await mirrorRemoteImage(resultUrl, req.log);
+                await appendResultPhoto(orderId, mirrored);
+                // The next photo is generated FROM this one (kie-hosted result url).
+                inputUrls = [resultUrl];
+              }
+            } catch (err) {
+              req.log.error({ err, orderId }, "review chain failed");
+            }
+          };
+
+          await Promise.all(Array.from({ length: reviewSets }, () => runChain()));
+
+          // Finalize: success if we produced any photos, otherwise refund.
+          const [fin] = await db.select().from(ordersTable).where(eq(ordersTable.id, orderId)).limit(1);
+          if (fin && fin.status === "processing") {
+            if ((fin.resultPhotos?.length ?? 0) > 0) {
+              await db
+                .update(ordersTable)
+                .set({ status: "success", completedAt: new Date() })
+                .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "processing")));
+            } else {
+              await refundAndFail("Не удалось сгенерировать фото");
+            }
           }
-
-          await db
-            .update(ordersTable)
-            .set({ kieTaskIds: taskIds })
-            .where(eq(ordersTable.id, orderId));
         } catch (err) {
           req.log.error({ err, orderId }, "review kie kickoff failed; refunding");
           await refundAndFail(err instanceof Error ? err.message : "Не удалось запустить генерацию");
@@ -453,99 +520,27 @@ router.get("/generate/:orderId/status", requireAuth, async (req, res) => {
     return true;
   }
 
-  // Review orders fan out to many kie tasks (one per photo). We poll every task
-  // OUTSIDE a transaction (network calls), then merge results atomically under a
-  // row lock so concurrent polls can't clobber each other. `receivedPhotoNumbers`
-  // is reused to track which task indices have finished.
+  // Review orders are driven by a background sequential-chain job that writes
+  // resultPhotos incrementally and sets the final status. Here we just surface
+  // the current DB state, with a timeout safety net in case the background
+  // worker died (e.g. a server restart mid-generation).
   if (order.serviceKey === "review") {
-    const taskIds = order.kieTaskIds ?? [];
-    if (taskIds.length === 0) {
-      // Tasks are still being created in the background.
-      res.json({ orderId: order.id, status: order.status, resultPhotos: order.resultPhotos ?? [] });
-      return;
-    }
-    try {
-      // Poll only indices not already known to be finished; mirror successes.
-      const known = new Set<number>(order.receivedPhotoNumbers ?? []);
-      const newlyDone: { idx: number; url: string | null }[] = [];
-      for (let i = 0; i < taskIds.length; i++) {
-        if (known.has(i)) continue;
-        const info = await kieGetTask(taskIds[i]!);
-        if (info.state === "success" && info.resultUrls.length > 0) {
-          const mirrored = await mirrorRemoteImage(info.resultUrls[0]!, req.log);
-          newlyDone.push({ idx: i, url: mirrored });
-        } else if (info.state === "fail") {
-          newlyDone.push({ idx: i, url: null });
-        }
-      }
-
-      // Merge under a row lock against the freshest state.
-      const merged = await db.transaction(async (tx) => {
-        const [fresh] = await tx
-          .select()
-          .from(ordersTable)
-          .where(eq(ordersTable.id, order.id))
-          .for("update")
-          .limit(1);
-        if (!fresh || fresh.status !== "processing") {
-          return { status: fresh?.status ?? "failed", photos: fresh?.resultPhotos ?? [], refunded: false };
-        }
-        const done = new Set<number>(fresh.receivedPhotoNumbers ?? []);
-        const photos = [...fresh.resultPhotos];
-        for (const n of newlyDone) {
-          if (done.has(n.idx)) continue;
-          done.add(n.idx);
-          if (n.url) photos.push(n.url);
-        }
-        const finished = done.size >= taskIds.length;
-        const aged = Date.now() - fresh.createdAt.getTime() > STUCK_TASK_MS;
-
-        let status: "processing" | "success" | "failed" = "processing";
-        let errorMessage: string | null = null;
-        if (photos.length > 0 && (finished || aged)) {
-          status = "success";
-        } else if (photos.length === 0 && (finished || aged)) {
-          status = "failed";
-          errorMessage = finished ? "Не удалось сгенерировать фото" : "Превышено время ожидания генерации";
-        }
-
-        await tx
+    const aged = Date.now() - order.createdAt.getTime() > STUCK_TASK_MS;
+    if (aged && order.status === "processing") {
+      if ((order.resultPhotos?.length ?? 0) > 0) {
+        await db
           .update(ordersTable)
-          .set({
-            resultPhotos: photos,
-            receivedPhotoNumbers: [...done],
-            status,
-            errorMessage,
-            completedAt: status === "processing" ? null : new Date(),
-          })
-          .where(eq(ordersTable.id, fresh.id));
-
-        let refunded = false;
-        if (status === "failed" && fresh.userId) {
-          await tx
-            .update(usersTable)
-            .set({
-              balance: sql`${usersTable.balance} + ${fresh.amount}`,
-              totalSpent: sql`greatest(${usersTable.totalSpent} - ${fresh.amount}, 0)`,
-            })
-            .where(eq(usersTable.id, fresh.userId));
-          refunded = true;
-        }
-        return { status, photos, refunded, errorMessage };
-      });
-
-      res.json({
-        orderId: order.id,
-        status: merged.status,
-        resultPhotos: merged.photos,
-        ...(merged.status === "failed" ? { errorMessage: merged.errorMessage, refunded: merged.refunded } : {}),
-      });
-      return;
-    } catch (err) {
-      req.log.error({ err, orderId: order.id }, "review status check failed");
-      res.json({ orderId: order.id, status: "processing", resultPhotos: order.resultPhotos ?? [] });
+          .set({ status: "success", completedAt: new Date() })
+          .where(and(eq(ordersTable.id, order.id), eq(ordersTable.status, "processing")));
+        res.json({ orderId: order.id, status: "success", resultPhotos: order.resultPhotos ?? [] });
+        return;
+      }
+      await failAndRefund("Превышено время ожидания генерации");
+      res.json({ orderId: order.id, status: "failed", errorMessage: "Превышено время ожидания генерации", refunded: true });
       return;
     }
+    res.json({ orderId: order.id, status: order.status, resultPhotos: order.resultPhotos ?? [] });
+    return;
   }
 
   const ageMs = Date.now() - order.createdAt.getTime();
