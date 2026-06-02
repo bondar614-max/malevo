@@ -6,6 +6,71 @@ import { requireAuth } from "../lib/auth";
 import { kieUploadFile, kieCreateNanoBananaProTask, kieGetTask } from "../lib/kie";
 import { uploadBufferToStorage } from "../lib/storage-helpers";
 
+const REVIEW_AGES = new Set(["21-30", "30-45", "45+", "random"]);
+const MAX_SETS = 10;
+
+/** Public base URL n8n should call back on (prod domain, falling back to dev). */
+function publicBaseUrl(): string {
+  const fromDomains = process.env["REPLIT_DOMAINS"]?.split(",")[0]?.trim();
+  const host = fromDomains || process.env["REPLIT_DEV_DOMAIN"];
+  if (!host) throw new Error("Public domain is not configured");
+  return `https://${host}`;
+}
+
+interface N8nForwardInput {
+  generationId: string;
+  item: string;
+  gender: string;
+  age: string;
+  location: string;
+  locationName: string;
+  sets: number;
+  photoBase64: string;
+  photoName: string;
+  photoType: string;
+}
+
+/** Forward a review generation request to the external n8n webhook. No retry. */
+async function forwardReviewToN8n(input: N8nForwardInput): Promise<void> {
+  const webhookUrl = process.env["N8N_REVIEW_WEBHOOK_URL"];
+  const secret = process.env["N8N_CALLBACK_SECRET"];
+  if (!webhookUrl) throw new Error("N8N_REVIEW_WEBHOOK_URL is not configured");
+  if (!secret) throw new Error("N8N_CALLBACK_SECRET is not configured");
+
+  const payload = {
+    generation_id: input.generationId,
+    item: input.item,
+    gender: input.gender,
+    age: input.age,
+    location: input.location,
+    location_name: input.locationName,
+    sets: input.sets,
+    expected_photos: input.sets * 3,
+    photo_base64: input.photoBase64,
+    photo_name: input.photoName,
+    photo_type: input.photoType,
+    callback_url: `${publicBaseUrl()}/api/photos/callback`,
+    callback_secret: secret,
+  };
+
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), 30_000);
+  try {
+    const res = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: ac.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`n8n webhook responded ${res.status}: ${text.slice(0, 200)}`);
+    }
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 async function mirrorRemoteImage(url: string, log: { error: (o: object, m?: string) => void }): Promise<string> {
   try {
     const ac = new AbortController();
@@ -182,6 +247,13 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
 
     let locationFragment = "";
     let resolvedLocationId: string | null = null;
+    let locationValue = "";
+    let locationName = "";
+    // Review-only inputs forwarded to n8n.
+    let reviewItem = "";
+    let reviewGender = "female";
+    let reviewAge = "random";
+    let reviewSets = 1;
     if (serviceKey === "review") {
       if (!locationId || !UUID_RE.test(locationId)) {
         res.status(400).json({ error: "Выберите локацию" });
@@ -193,7 +265,34 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
         return;
       }
       locationFragment = loc.promptFragment;
+      locationValue = loc.promptFragment || loc.name;
+      locationName = loc.name;
       resolvedLocationId = loc.id;
+
+      reviewItem = String(req.body?.item ?? "").trim();
+      if (!reviewItem) {
+        res.status(400).json({ error: "Укажите название одежды" });
+        return;
+      }
+      if (reviewItem.length > 255) reviewItem = reviewItem.slice(0, 255);
+
+      reviewGender = String(req.body?.gender ?? "female").trim().toLowerCase();
+      if (reviewGender !== "female") {
+        res.status(400).json({ error: "Сейчас доступна только женская генерация" });
+        return;
+      }
+
+      reviewAge = String(req.body?.age ?? "random").trim();
+      if (!REVIEW_AGES.has(reviewAge)) {
+        res.status(400).json({ error: "Выберите возраст" });
+        return;
+      }
+
+      reviewSets = Math.floor(Number(req.body?.sets ?? 1));
+      if (!Number.isFinite(reviewSets) || reviewSets < 1 || reviewSets > MAX_SETS) {
+        res.status(400).json({ error: `Количество комплектов: от 1 до ${MAX_SETS}` });
+        return;
+      }
     }
 
     const userId = req.auth!.userId;
@@ -215,6 +314,9 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
       return;
     }
 
+    const isReview = serviceKey === "review";
+    const expectedPhotos = isReview ? reviewSets * 3 : 0;
+
     const [pendingOrder] = await db
       .insert(ordersTable)
       .values({
@@ -224,6 +326,9 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
         status: "processing",
         amount: price.toFixed(2),
         sourcePhotos: [],
+        ...(isReview
+          ? { item: reviewItem, gender: reviewGender, age: reviewAge, sets: reviewSets, expectedPhotos }
+          : {}),
       })
       .returning();
     const orderId = pendingOrder!.id;
@@ -242,6 +347,57 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
       }
     }
 
+    // ===== Review: forward to n8n (we do NOT generate ourselves) =====
+    if (isReview) {
+      const f = files[0]!;
+      let storedSourceUrl: string;
+      try {
+        storedSourceUrl = await uploadBufferToStorage(f.buffer, f.mimetype, "source");
+      } catch (err) {
+        req.log.error({ err, orderId }, "review source upload failed; refunding");
+        await refundAndFail("Не удалось сохранить исходное фото");
+        res.status(502).json({ error: "Не удалось сохранить исходное фото", refunded: true });
+        return;
+      }
+
+      try {
+        await db
+          .update(ordersTable)
+          .set({ sourcePhotoUrl: storedSourceUrl, sourcePhotos: [storedSourceUrl] })
+          .where(eq(ordersTable.id, orderId));
+      } catch (err) {
+        req.log.error({ err, orderId }, "review source persist failed; refunding");
+        await refundAndFail("Не удалось сохранить исходное фото");
+        res.status(502).json({ error: "Не удалось сохранить исходное фото", refunded: true });
+        return;
+      }
+
+      // Respond immediately; forward to n8n asynchronously (no retry).
+      res.status(201).json({ orderId, status: "processing" });
+
+      void (async () => {
+        try {
+          await forwardReviewToN8n({
+            generationId: orderId,
+            item: reviewItem,
+            gender: reviewGender,
+            age: reviewAge,
+            location: locationValue,
+            locationName,
+            sets: reviewSets,
+            photoBase64: f.buffer.toString("base64"),
+            photoName: f.originalname,
+            photoType: f.mimetype,
+          });
+        } catch (err) {
+          req.log.error({ err, orderId }, "n8n forward failed; refunding");
+          await refundAndFail(err instanceof Error ? err.message : "Не удалось отправить запрос на генерацию");
+        }
+      })();
+      return;
+    }
+
+    // ===== Non-review services: existing kie.ai flow =====
     try {
       const uploadedUrls: string[] = [];
       for (let i = 0; i < files.length; i++) {
@@ -278,6 +434,90 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
     req.log.error({ err }, "service generate failed");
     const msg = err instanceof Error ? err.message : "Generation failed";
     res.status(500).json({ error: msg });
+  }
+});
+
+// ===== n8n callback: receives generated review photos one at a time =====
+router.post("/photos/callback", async (req, res) => {
+  const secret = process.env["N8N_CALLBACK_SECRET"];
+  if (!secret) {
+    req.log.error("N8N_CALLBACK_SECRET is not configured");
+    res.status(503).json({ error: "Callback not configured" });
+    return;
+  }
+  const provided = req.header("x-callback-secret") ?? String(req.body?.callback_secret ?? "");
+  if (provided !== secret) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  const generationId = String(req.body?.generation_id ?? "");
+  if (!UUID_RE.test(generationId)) {
+    res.status(400).json({ error: "Invalid generation_id" });
+    return;
+  }
+  const imageUrl = typeof req.body?.image_url === "string" ? req.body.image_url.trim() : "";
+  if (!imageUrl) {
+    res.status(400).json({ error: "image_url is required" });
+    return;
+  }
+  const rawNumber = req.body?.photo_number;
+  const photoNumber =
+    rawNumber === undefined || rawNumber === null || rawNumber === ""
+      ? null
+      : Number(rawNumber);
+  if (photoNumber !== null && !Number.isFinite(photoNumber)) {
+    res.status(400).json({ error: "Invalid photo_number" });
+    return;
+  }
+
+  try {
+    const result = await db.transaction(async (tx) => {
+      const [order] = await tx
+        .select()
+        .from(ordersTable)
+        .where(eq(ordersTable.id, generationId))
+        .for("update")
+        .limit(1);
+      if (!order || order.serviceKey !== "review") {
+        return { code: 404 as const };
+      }
+      if (order.status !== "processing") {
+        return { code: 200 as const, status: order.status, received: order.resultPhotos.length };
+      }
+
+      const nums = order.receivedPhotoNumbers ?? [];
+      if (photoNumber !== null && nums.includes(photoNumber)) {
+        return { code: 200 as const, duplicate: true, received: order.resultPhotos.length };
+      }
+
+      const mirrored = await mirrorRemoteImage(imageUrl, req.log);
+      const newPhotos = [...order.resultPhotos, mirrored];
+      const newNums = photoNumber !== null ? [...nums, photoNumber] : nums;
+      const expected = order.expectedPhotos > 0 ? order.expectedPhotos : newPhotos.length;
+      const done = newPhotos.length >= expected;
+
+      await tx
+        .update(ordersTable)
+        .set({
+          resultPhotos: newPhotos,
+          receivedPhotoNumbers: newNums,
+          status: done ? "success" : "processing",
+          completedAt: done ? new Date() : null,
+        })
+        .where(eq(ordersTable.id, order.id));
+
+      return { code: 200 as const, received: newPhotos.length, expected, done };
+    });
+
+    if (result.code === 404) {
+      res.status(404).json({ error: "Order not found" });
+      return;
+    }
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    req.log.error({ err, generationId }, "n8n callback failed");
+    res.status(500).json({ error: "Callback processing failed" });
   }
 });
 
@@ -333,7 +573,8 @@ router.get("/generate/:orderId/status", requireAuth, async (req, res) => {
   }
 
   if (!order.kieTaskId) {
-    res.json({ orderId: order.id, status: order.status, resultPhotos: [] });
+    // Review (n8n) orders have no kie task; the callback flips them to success.
+    res.json({ orderId: order.id, status: order.status, resultPhotos: order.resultPhotos ?? [] });
     return;
   }
 

@@ -39,14 +39,15 @@ const DEFAULT_SERVICES = [
   },
 ];
 
-const DEFAULT_LOCATIONS = [
-  { name: "Уютное кафе", promptFragment: "sitting in a cozy modern cafe with warm lighting, coffee cup on the table, soft window light behind", sortOrder: 1 },
-  { name: "Дом / квартира", promptFragment: "at home in a bright modern apartment living room, soft daylight from a window, casual interior in the background", sortOrder: 2 },
-  { name: "Улица города", promptFragment: "on a sunny city street with blurred urban background, natural daylight, casual outdoor portrait", sortOrder: 3 },
-  { name: "Парк", promptFragment: "in a green city park with trees and soft afternoon sunlight, natural outdoor lighting", sortOrder: 4 },
-  { name: "Офис", promptFragment: "in a modern office with bright workspace background, soft natural light, professional yet casual setting", sortOrder: 5 },
-  { name: "Ресторан", promptFragment: "in a stylish modern restaurant interior with warm ambient lighting, soft bokeh background", sortOrder: 6 },
-  { name: "Пляж", promptFragment: "on a sunny beach with sea and sky in the background, soft golden hour light, natural outdoor photo", sortOrder: 7 },
+/**
+ * The canonical review locations. `promptFragment` carries the value forwarded
+ * to n8n as the `location` of the generated selfie.
+ */
+const REVIEW_LOCATIONS = [
+  { name: "Селфи в квартире", promptFragment: "apartment", sortOrder: 1 },
+  { name: "Селфи в комнате", promptFragment: "room", sortOrder: 2 },
+  { name: "Селфи в лифте", promptFragment: "elevator", sortOrder: 3 },
+  { name: "Селфи в примерочной ПВЗ", promptFragment: "pvz_fitting_room", sortOrder: 4 },
 ];
 
 /** Ensure the two services exist; only inserts when missing — never overwrites admin edits. */
@@ -60,12 +61,27 @@ export async function ensureServicesAndLocations(): Promise<void> {
       }
     }
 
-    const existingLocs = await db.select({ id: locationsTable.id }).from(locationsTable).where(eq(locationsTable.serviceKey, "review")).limit(1);
-    if (existingLocs.length === 0) {
-      await db.insert(locationsTable).values(
-        DEFAULT_LOCATIONS.map((l) => ({ ...l, serviceKey: "review" })),
-      );
-      logger.info({ count: DEFAULT_LOCATIONS.length }, "[bootstrap] inserted default review locations");
+    // Reconcile the review location set to exactly the four canonical selfie
+    // locations. We never delete rows (orders reference them via FK); instead we
+    // deactivate any stale location and (re)activate / insert the canonical four.
+    const desiredNames = new Set(REVIEW_LOCATIONS.map((l) => l.name));
+    const allReviewLocs = await db.select().from(locationsTable).where(eq(locationsTable.serviceKey, "review"));
+
+    for (const d of REVIEW_LOCATIONS) {
+      const match = allReviewLocs.find((l) => l.name === d.name);
+      if (!match) {
+        await db.insert(locationsTable).values({ ...d, serviceKey: "review", isActive: true });
+        logger.info({ name: d.name }, "[bootstrap] inserted review location");
+      } else if (!match.isActive) {
+        await db.update(locationsTable).set({ isActive: true }).where(eq(locationsTable.id, match.id));
+      }
+    }
+
+    for (const loc of allReviewLocs) {
+      if (!desiredNames.has(loc.name) && loc.isActive) {
+        await db.update(locationsTable).set({ isActive: false }).where(eq(locationsTable.id, loc.id));
+        logger.info({ name: loc.name }, "[bootstrap] deactivated stale review location");
+      }
     }
   } catch (err) {
     logger.error({ err }, "[bootstrap] failed to seed services/locations");

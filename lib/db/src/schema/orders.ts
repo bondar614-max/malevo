@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, timestamp, jsonb, numeric } from "drizzle-orm/pg-core";
+import { pgTable, uuid, varchar, text, timestamp, jsonb, numeric, integer } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 import { stylesTable } from "./styles";
 import { servicesTable, locationsTable } from "./services";
@@ -17,6 +17,13 @@ export const ordersTable = pgTable("orders", {
   kieTaskId: varchar("kie_task_id", { length: 255 }),
   paymentId: varchar("payment_id", { length: 255 }),
   errorMessage: text("error_message"),
+  // Review (n8n) order inputs and progress tracking
+  item: varchar("item", { length: 255 }),
+  gender: varchar("gender", { length: 32 }),
+  age: varchar("age", { length: 32 }),
+  sets: integer("sets"),
+  expectedPhotos: integer("expected_photos").notNull().default(0),
+  receivedPhotoNumbers: jsonb("received_photo_numbers").$type<number[]>().notNull().default([]),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt: timestamp("completed_at", { withTimezone: true }),
 });
