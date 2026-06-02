@@ -359,6 +359,10 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
             .set({ sourcePhotoUrl: seedUrls[0] ?? null, sourcePhotos: seedUrls })
             .where(eq(ordersTable.id, orderId));
 
+          // Remember the first provider error so a fully-failed order can show
+          // the admin the real cause (e.g. a chosen model rejecting the input).
+          let firstError: string | null = null;
+
           // One sequential chain per set. Errors inside a chain stop only that
           // chain — other chains keep producing photos.
           const runChain = async (): Promise<void> => {
@@ -379,7 +383,8 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
                 inputs = [first];
               }
             } catch (err) {
-              req.log.error({ err, orderId }, "review chain failed");
+              if (!firstError) firstError = err instanceof Error ? err.message : String(err);
+              req.log.error({ err, orderId, model }, "review chain failed");
             }
           };
 
@@ -394,7 +399,15 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
                 .set({ status: "success", completedAt: new Date() })
                 .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "processing")));
             } else {
-              await refundAndFail("Не удалось сгенерировать фото");
+              // Log the raw provider cause for admins/operators; show users a
+              // clean message without leaking upstream provider internals.
+              req.log.error(
+                { orderId, model, cause: firstError },
+                "review order produced no photos; refunding",
+              );
+              await refundAndFail(
+                "Не удалось сгенерировать фото. Попробуйте ещё раз или обратитесь в поддержку.",
+              );
             }
           }
         } catch (err) {

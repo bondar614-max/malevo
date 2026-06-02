@@ -125,12 +125,37 @@ interface GenerateOpts {
 /**
  * Generate one or more images from a prompt and optional input photos using the
  * configured model. Routes `kie:*` models to kie.ai and everything else to
- * OpenRouter. Returns the produced images (empty array if the model returned
- * none); throws on hard provider errors.
+ * OpenRouter. Retries transient failures (errors or empty results) up to
+ * `RETRIES` times. Throws the last provider error if every attempt errored, so
+ * callers can surface a meaningful message; returns `[]` only if the model ran
+ * but produced no image.
  */
+const GEN_RETRIES = 2;
+
 export async function generateImages(opts: GenerateOpts): Promise<GenImage[]> {
-  if (opts.model.startsWith("kie:")) return generateViaKie(opts);
-  return generateViaOpenRouter(opts);
+  const attempt = (): Promise<GenImage[]> =>
+    opts.model.startsWith("kie:") ? generateViaKie(opts) : generateViaOpenRouter(opts);
+
+  let lastError: unknown = null;
+  for (let i = 0; i <= GEN_RETRIES; i++) {
+    try {
+      const imgs = await attempt();
+      if (imgs.length > 0) return imgs;
+      lastError = null; // model ran but returned nothing — retry once more
+    } catch (err) {
+      lastError = err;
+      opts.log.error({ err, model: opts.model, attempt: i + 1 }, "image generation attempt failed");
+      // Deterministic client errors (bad model / rejected input) won't change on
+      // retry; stop early to avoid wasted calls and log spam (408/429 may recover).
+      const status = (err as { status?: number })?.status;
+      if (typeof status === "number" && status >= 400 && status < 500 && status !== 408 && status !== 429) {
+        throw err;
+      }
+    }
+    if (i < GEN_RETRIES) await sleep(2000);
+  }
+  if (lastError) throw lastError;
+  return [];
 }
 
 /** True for IPs in private / loopback / link-local / ULA ranges (SSRF guard). */
@@ -263,13 +288,23 @@ async function generateViaOpenRouter(opts: GenerateOpts): Promise<GenImage[]> {
   );
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`openrouter image failed: ${res.status} ${text.slice(0, 200)}`);
+    const err = new Error(`openrouter image failed: ${res.status} ${text.slice(0, 200)}`) as Error & {
+      status?: number;
+    };
+    err.status = res.status;
+    throw err;
   }
 
   const json = (await res.json()) as {
     choices?: Array<{ message?: { images?: Array<{ image_url?: { url?: string }; url?: string }> } }>;
   };
   const images = json.choices?.[0]?.message?.images ?? [];
+  if (images.length === 0) {
+    opts.log.error(
+      { model: opts.model, finishReason: (json as { choices?: Array<{ finish_reason?: string }> }).choices?.[0]?.finish_reason },
+      "openrouter returned no image (model may not support image output for this input)",
+    );
+  }
   const out: GenImage[] = [];
   for (const img of images) {
     const url = img.image_url?.url ?? img.url;
