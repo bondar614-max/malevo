@@ -5,9 +5,10 @@ description: How the "review" service generates photos — kie.ai sequential cha
 
 # Review service generation flow
 
-The `review` service ("Фото для отзывов") generates directly via kie.ai. It does
-NOT use n8n (the old `/photos/callback` endpoint and `N8N_REVIEW_WEBHOOK_URL` /
-`N8N_CALLBACK_SECRET` secrets are unused).
+The `review` service ("Фото для отзывов") generates via the model configured for
+the `review` category in the admin panel — kie.ai or any OpenRouter image model
+(see image-generation-providers.md). It does NOT use n8n (the old `/photos/callback`
+endpoint and `N8N_REVIEW_WEBHOOK_URL` / `N8N_CALLBACK_SECRET` secrets are unused).
 
 **Why:** n8n was an external round-trip; the user wanted review photos generated
 like styles, billed via kie.ai. Later the user wanted each photo in a set to be a
@@ -19,9 +20,10 @@ like styles, billed via kie.ai. Later the user wanted each photo in a set to be 
 - Photo count = `sets * PHOTOS_PER_SET` (3). Each **set is a sequential chain**:
   photo 1 is generated from the uploaded source, photo 2 from photo 1, photo 3
   from photo 2. Steps after the first append a `POSE_VARIATIONS` directive forcing
-  a different pose while keeping same person/outfit/location. The kie *result url*
-  is fed directly as the `image_input` for the next step (kie-hosted urls work as
-  input; see kie-image-input.md — only OUR storage urls fail).
+  a different pose while keeping same person/outfit/location. Chaining now passes
+  the previous step's result *image bytes* (GenImage buffer) as the next step's
+  input via `generateImages()`, so it is provider-agnostic (the kie path re-uploads
+  the buffer each step internally).
 - The whole thing runs in a **background async job** kicked off after the route
   responds `201`. Sets run as concurrent chains (`Promise.all` of `runChain`).
   Each chain swallows its own errors (so `Promise.all` never rejects); the outer

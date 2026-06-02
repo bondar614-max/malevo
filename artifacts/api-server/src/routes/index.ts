@@ -10,6 +10,7 @@ import generateRouter from "./generate";
 import uploadsRouter from "./uploads";
 import storageRouter from "./storage";
 import servicesRouter from "./services";
+import aiModelsRouter from "./aiModels";
 
 const router: IRouter = Router();
 
@@ -23,6 +24,7 @@ router.use(generateRouter);
 router.use(uploadsRouter);
 router.use(storageRouter);
 router.use(servicesRouter);
+router.use(aiModelsRouter);
 router.use(adminRouter);
 
 export default router;

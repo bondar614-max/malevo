@@ -5,9 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { apiFetch, clearAuth, getStoredUser, getToken } from "@/lib/admin-api";
-import { LogOut, Users, ImageIcon, Tag, Layers, Pencil, Trash2, Plus, X, Shield, Upload, Loader2, Sparkles, MapPin } from "lucide-react";
+import { LogOut, Users, ImageIcon, Tag, Layers, Pencil, Trash2, Plus, X, Shield, Upload, Loader2, Sparkles, MapPin, Cpu, Search, Check } from "lucide-react";
 
-type Tab = "users" | "orders" | "tariffs" | "styles" | "services" | "locations";
+type Tab = "users" | "orders" | "tariffs" | "styles" | "services" | "locations" | "ai";
 
 interface UserRow {
   id: string; email: string; name: string; role: string; isBlocked: boolean;
@@ -69,6 +69,7 @@ export default function Admin() {
     { id: "styles", label: "Стили", icon: Layers },
     { id: "services", label: "Услуги", icon: Sparkles },
     { id: "locations", label: "Локации", icon: MapPin },
+    { id: "ai", label: "ИИ-модели", icon: Cpu },
   ];
 
   return (
@@ -117,6 +118,7 @@ export default function Admin() {
           {tab === "styles" && <StylesTab />}
           {tab === "services" && <ServicesTab />}
           {tab === "locations" && <LocationsTab />}
+          {tab === "ai" && <AiModelsTab />}
         </div>
       </main>
     </div>
@@ -1160,6 +1162,164 @@ function LocationEditor({ initial, onClose, onSaved }: { initial: LocationRow; o
           </Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ===== AI Models Tab =====
+interface ModelOption { id: string; name: string; }
+interface AiSettings { styles: string; photoshoot: string; review: string; }
+
+const AI_CATEGORIES: Array<{ key: keyof AiSettings; label: string; desc: string }> = [
+  { key: "styles", label: "Стили", desc: "Модель для генерации стилей" },
+  { key: "photoshoot", label: "Фотосессия", desc: "Модель для услуги фотосессии (WB)" },
+  { key: "review", label: "Фото для отзывов", desc: "Модель для генерации фото-отзывов" },
+];
+
+function AiModelsTab() {
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [settings, setSettings] = useState<AiSettings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [m, s] = await Promise.all([
+          apiFetch<ModelOption[]>("/admin/ai/models"),
+          apiFetch<AiSettings>("/admin/ai/settings"),
+        ]);
+        setModels(m);
+        setSettings(s);
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : "Ошибка загрузки");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  async function save() {
+    if (!settings) return;
+    setSaving(true);
+    setErr("");
+    setOk(false);
+    try {
+      const updated = await apiFetch<AiSettings>("/admin/ai/settings", {
+        method: "PATCH",
+        body: JSON.stringify(settings),
+      });
+      setSettings(updated);
+      setOk(true);
+      setTimeout(() => setOk(false), 2500);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Ошибка сохранения");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="animate-spin" size={18} /> Загрузка моделей…</div>;
+  }
+
+  return (
+    <div>
+      <div className="mb-6">
+        <h2 className="text-3xl font-bold text-white">ИИ-модели</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          Выберите ИИ-модель отдельно для каждой категории генерации. Список моделей подгружается из OpenRouter в реальном времени, плюс модель kie.ai по умолчанию.
+        </p>
+      </div>
+
+      {err && <div className="text-sm rounded-lg p-3 border text-red-400 bg-red-500/10 border-red-500/30 mb-4">{err}</div>}
+
+      <div className="space-y-5 max-w-2xl">
+        {AI_CATEGORIES.map((cat) => (
+          <div key={cat.key} className="bg-card border border-border rounded-xl p-5">
+            <div className="mb-3">
+              <div className="font-semibold text-white">{cat.label}</div>
+              <div className="text-xs text-muted-foreground">{cat.desc}</div>
+            </div>
+            <ModelSelect
+              models={models}
+              value={settings?.[cat.key] ?? ""}
+              onChange={(v) => setSettings((s) => (s ? { ...s, [cat.key]: v } : s))}
+            />
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-6 flex items-center gap-3 max-w-2xl">
+        <Button onClick={save} disabled={saving} className="bg-gradient-primary text-white border-0">
+          {saving ? "..." : "Сохранить"}
+        </Button>
+        {ok && <span className="text-sm text-green-400 flex items-center gap-1"><Check size={16} /> Сохранено</span>}
+        <span className="text-xs text-muted-foreground ml-auto">Доступно моделей: {models.length}</span>
+      </div>
+    </div>
+  );
+}
+
+function ModelSelect({ models, value, onChange }: { models: ModelOption[]; value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const selected = models.find((m) => m.id === value);
+  const filtered = query.trim()
+    ? models.filter((m) => `${m.name} ${m.id}`.toLowerCase().includes(query.trim().toLowerCase()))
+    : models;
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between gap-2 bg-secondary border border-border rounded-lg px-3 py-2.5 text-left text-sm text-white hover:border-primary/50 transition-colors"
+      >
+        <span className="truncate">
+          {selected ? selected.name : value || "Выберите модель"}
+          {selected && <span className="text-xs text-muted-foreground ml-2">{selected.id}</span>}
+        </span>
+        <Cpu size={16} className="text-muted-foreground shrink-0" />
+      </button>
+
+      {open && (
+        <div className="absolute z-20 mt-1 w-full bg-card border border-border rounded-lg shadow-xl overflow-hidden">
+          <div className="p-2 border-b border-border flex items-center gap-2">
+            <Search size={15} className="text-muted-foreground" />
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Поиск модели…"
+              className="flex-1 bg-transparent text-sm text-white outline-none placeholder:text-muted-foreground"
+            />
+          </div>
+          <div className="max-h-72 overflow-auto">
+            {filtered.length === 0 && (
+              <div className="px-3 py-3 text-sm text-muted-foreground">Ничего не найдено</div>
+            )}
+            {filtered.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => { onChange(m.id); setOpen(false); setQuery(""); }}
+                className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-white/5 ${
+                  m.id === value ? "text-white bg-white/5" : "text-muted-foreground"
+                }`}
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-white">{m.name}</span>
+                  <span className="block truncate text-xs text-muted-foreground">{m.id}</span>
+                </span>
+                {m.id === value && <Check size={15} className="text-primary shrink-0" />}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

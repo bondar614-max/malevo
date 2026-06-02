@@ -5,3 +5,4 @@ export * from "./reviews";
 export * from "./gallery";
 export * from "./tariffs";
 export * from "./services";
+export * from "./settings";
