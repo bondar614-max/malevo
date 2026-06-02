@@ -8,69 +8,33 @@ import { uploadBufferToStorage } from "../lib/storage-helpers";
 
 const REVIEW_AGES = new Set(["21-30", "30-45", "45+", "random"]);
 const MAX_SETS = 10;
+const PHOTOS_PER_SET = 3;
 
-/** Public base URL n8n should call back on (prod domain, falling back to dev). */
-function publicBaseUrl(): string {
-  const fromDomains = process.env["REPLIT_DOMAINS"]?.split(",")[0]?.trim();
-  const host = fromDomains || process.env["REPLIT_DEV_DOMAIN"];
-  if (!host) throw new Error("Public domain is not configured");
-  return `https://${host}`;
+const AGE_LABELS: Record<string, string> = {
+  "21-30": "21-30 years old",
+  "30-45": "30-45 years old",
+  "45+": "45+ years old",
+};
+
+/** Pick a random element from a non-empty array. */
+function pickRandom<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)]!;
 }
 
-interface N8nForwardInput {
-  generationId: string;
-  email: string;
-  item: string;
-  gender: string;
-  age: string;
-  location: string;
-  locationName: string;
-  sets: number;
-  photoBase64: string;
-  photoName: string;
-  photoType: string;
-}
-
-/** Forward a review generation request to the external n8n webhook. No retry. */
-async function forwardReviewToN8n(input: N8nForwardInput): Promise<void> {
-  const webhookUrl = process.env["N8N_REVIEW_WEBHOOK_URL"];
-  const secret = process.env["N8N_CALLBACK_SECRET"];
-  if (!webhookUrl) throw new Error("N8N_REVIEW_WEBHOOK_URL is not configured");
-  if (!secret) throw new Error("N8N_CALLBACK_SECRET is not configured");
-
-  const payload = {
-    generation_id: input.generationId,
-    email: input.email,
-    item: input.item,
-    gender: input.gender,
-    age: input.age,
-    location: input.location,
-    location_name: input.locationName,
-    sets: input.sets,
-    expected_photos: input.sets * 3,
-    photo_base64: input.photoBase64,
-    photo_name: input.photoName,
-    photo_type: input.photoType,
-    callback_url: `${publicBaseUrl()}/api/photos/callback`,
-    callback_secret: secret,
-  };
-
-  const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), 30_000);
-  try {
-    const res = await fetch(webhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: ac.signal,
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`n8n webhook responded ${res.status}: ${text.slice(0, 200)}`);
-    }
-  } finally {
-    clearTimeout(t);
-  }
+/**
+ * Build the final kie.ai prompt for one review photo. The location prompt may
+ * contain {item} / {age} placeholders; if it does not, those values are
+ * appended automatically. The service base prompt is prepended.
+ */
+function composeReviewPrompt(basePrompt: string, locationPrompt: string, item: string, age: string): string {
+  const ageText = age && age !== "random" ? (AGE_LABELS[age] ?? age) : "";
+  const hasItem = locationPrompt.includes("{item}");
+  const hasAge = locationPrompt.includes("{age}");
+  let p = locationPrompt.replaceAll("{item}", item).replaceAll("{age}", ageText);
+  const extras: string[] = [];
+  if (!hasItem && item) extras.push(`Clothing/item: ${item}.`);
+  if (!hasAge && ageText) extras.push(`Age: ${ageText}.`);
+  return [basePrompt.trim(), p.trim(), ...extras].filter(Boolean).join(" ").trim();
 }
 
 async function mirrorRemoteImage(url: string, log: { error: (o: object, m?: string) => void }): Promise<string> {
@@ -249,13 +213,12 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
 
     let locationFragment = "";
     let resolvedLocationId: string | null = null;
-    let locationValue = "";
-    let locationName = "";
-    // Review-only inputs forwarded to n8n.
+    // Review-only inputs.
     let reviewItem = "";
     let reviewGender = "female";
     let reviewAge = "random";
     let reviewSets = 1;
+    let reviewPromptPool: string[] = [];
     if (serviceKey === "review") {
       if (!locationId || !UUID_RE.test(locationId)) {
         res.status(400).json({ error: "Выберите локацию" });
@@ -266,10 +229,17 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
         res.status(404).json({ error: "Локация не найдена" });
         return;
       }
-      locationFragment = loc.promptFragment;
-      locationValue = loc.promptFragment || loc.name;
-      locationName = loc.name;
       resolvedLocationId = loc.id;
+      // Build the pool of prompts to choose from per photo. Prefer the new
+      // multi-prompt list; fall back to the legacy single fragment.
+      const listed = (loc.prompts ?? []).map((p) => p.trim()).filter(Boolean);
+      reviewPromptPool = listed.length > 0
+        ? listed
+        : (loc.promptFragment.trim() ? [loc.promptFragment.trim()] : []);
+      if (reviewPromptPool.length === 0) {
+        res.status(400).json({ error: "Для этой локации не настроены промпты. Обратитесь к администратору." });
+        return;
+      }
 
       reviewItem = String(req.body?.item ?? "").trim();
       if (!reviewItem) {
@@ -317,7 +287,7 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
     }
 
     const isReview = serviceKey === "review";
-    const expectedPhotos = isReview ? reviewSets * 3 : 0;
+    const expectedPhotos = isReview ? reviewSets * PHOTOS_PER_SET : 0;
 
     const [pendingOrder] = await db
       .insert(ordersTable)
@@ -349,52 +319,51 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
       }
     }
 
-    // ===== Review: forward to n8n (we do NOT generate ourselves) =====
+    // ===== Review: generate directly via kie.ai, one task per photo =====
     if (isReview) {
-      const f = files[0]!;
-      let storedSourceUrl: string;
-      try {
-        storedSourceUrl = await uploadBufferToStorage(f.buffer, f.mimetype, "source");
-      } catch (err) {
-        req.log.error({ err, orderId }, "review source upload failed; refunding");
-        await refundAndFail("Не удалось сохранить исходное фото");
-        res.status(502).json({ error: "Не удалось сохранить исходное фото", refunded: true });
-        return;
-      }
+      // Snapshot buffers/metadata for the async kickoff (multer memory storage).
+      const reviewFiles = files.map((f) => ({ buffer: f.buffer, mimetype: f.mimetype }));
 
-      try {
-        await db
-          .update(ordersTable)
-          .set({ sourcePhotoUrl: storedSourceUrl, sourcePhotos: [storedSourceUrl] })
-          .where(eq(ordersTable.id, orderId));
-      } catch (err) {
-        req.log.error({ err, orderId }, "review source persist failed; refunding");
-        await refundAndFail("Не удалось сохранить исходное фото");
-        res.status(502).json({ error: "Не удалось сохранить исходное фото", refunded: true });
-        return;
-      }
-
-      // Respond immediately; forward to n8n asynchronously (no retry).
+      // Respond immediately; create kie.ai tasks in the background.
       res.status(201).json({ orderId, status: "processing" });
 
       void (async () => {
         try {
-          await forwardReviewToN8n({
-            generationId: orderId,
-            email: user.email,
-            item: reviewItem,
-            gender: reviewGender,
-            age: reviewAge,
-            location: locationValue,
-            locationName,
-            sets: reviewSets,
-            photoBase64: f.buffer.toString("base64"),
-            photoName: f.originalname,
-            photoType: f.mimetype,
-          });
+          // Upload source photo(s) once; reuse the URLs for every task.
+          const uploadedUrls: string[] = [];
+          for (let i = 0; i < reviewFiles.length; i++) {
+            const rf = reviewFiles[i]!;
+            const safeName = `${userId}_${Date.now()}_${i}.${rf.mimetype.split("/")[1] ?? "png"}`;
+            const url = await kieUploadFile(rf.buffer, safeName, rf.mimetype);
+            uploadedUrls.push(url);
+          }
+
+          await db
+            .update(ordersTable)
+            .set({ sourcePhotoUrl: uploadedUrls[0] ?? null, sourcePhotos: uploadedUrls })
+            .where(eq(ordersTable.id, orderId));
+
+          // One task per expected photo, each with a randomly chosen prompt.
+          const taskIds: string[] = [];
+          for (let i = 0; i < expectedPhotos; i++) {
+            const chosen = pickRandom(reviewPromptPool);
+            const prompt = composeReviewPrompt(service.prompt, chosen, reviewItem, reviewAge);
+            const taskId = await kieCreateNanoBananaProTask({
+              prompt,
+              imageUrls: uploadedUrls,
+              aspectRatio: "auto",
+              resolution: "2K",
+            });
+            taskIds.push(taskId);
+          }
+
+          await db
+            .update(ordersTable)
+            .set({ kieTaskIds: taskIds })
+            .where(eq(ordersTable.id, orderId));
         } catch (err) {
-          req.log.error({ err, orderId }, "n8n forward failed; refunding");
-          await refundAndFail(err instanceof Error ? err.message : "Не удалось отправить запрос на генерацию");
+          req.log.error({ err, orderId }, "review kie kickoff failed; refunding");
+          await refundAndFail(err instanceof Error ? err.message : "Не удалось запустить генерацию");
         }
       })();
       return;
@@ -440,92 +409,8 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
   }
 });
 
-// ===== n8n callback: receives generated review photos one at a time =====
-router.post("/photos/callback", async (req, res) => {
-  const secret = process.env["N8N_CALLBACK_SECRET"];
-  if (!secret) {
-    req.log.error("N8N_CALLBACK_SECRET is not configured");
-    res.status(503).json({ error: "Callback not configured" });
-    return;
-  }
-  const provided = req.header("x-callback-secret") ?? String(req.body?.callback_secret ?? "");
-  if (provided !== secret) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
-
-  const generationId = String(req.body?.generation_id ?? "");
-  if (!UUID_RE.test(generationId)) {
-    res.status(400).json({ error: "Invalid generation_id" });
-    return;
-  }
-  const imageUrl = typeof req.body?.image_url === "string" ? req.body.image_url.trim() : "";
-  if (!imageUrl) {
-    res.status(400).json({ error: "image_url is required" });
-    return;
-  }
-  const rawNumber = req.body?.photo_number;
-  const photoNumber =
-    rawNumber === undefined || rawNumber === null || rawNumber === ""
-      ? null
-      : Number(rawNumber);
-  if (photoNumber !== null && !Number.isFinite(photoNumber)) {
-    res.status(400).json({ error: "Invalid photo_number" });
-    return;
-  }
-
-  try {
-    const result = await db.transaction(async (tx) => {
-      const [order] = await tx
-        .select()
-        .from(ordersTable)
-        .where(eq(ordersTable.id, generationId))
-        .for("update")
-        .limit(1);
-      if (!order || order.serviceKey !== "review") {
-        return { code: 404 as const };
-      }
-      if (order.status !== "processing") {
-        return { code: 200 as const, status: order.status, received: order.resultPhotos.length };
-      }
-
-      const nums = order.receivedPhotoNumbers ?? [];
-      if (photoNumber !== null && nums.includes(photoNumber)) {
-        return { code: 200 as const, duplicate: true, received: order.resultPhotos.length };
-      }
-
-      const mirrored = await mirrorRemoteImage(imageUrl, req.log);
-      const newPhotos = [...order.resultPhotos, mirrored];
-      const newNums = photoNumber !== null ? [...nums, photoNumber] : nums;
-      const expected = order.expectedPhotos > 0 ? order.expectedPhotos : newPhotos.length;
-      const done = newPhotos.length >= expected;
-
-      await tx
-        .update(ordersTable)
-        .set({
-          resultPhotos: newPhotos,
-          receivedPhotoNumbers: newNums,
-          status: done ? "success" : "processing",
-          completedAt: done ? new Date() : null,
-        })
-        .where(eq(ordersTable.id, order.id));
-
-      return { code: 200 as const, received: newPhotos.length, expected, done };
-    });
-
-    if (result.code === 404) {
-      res.status(404).json({ error: "Order not found" });
-      return;
-    }
-    res.json({ ok: true, ...result });
-  } catch (err) {
-    req.log.error({ err, generationId }, "n8n callback failed");
-    res.status(500).json({ error: "Callback processing failed" });
-  }
-});
-
 // Auto-fail tasks that have been processing too long.
-const STUCK_TASK_MS = 15 * 60 * 1000;
+const STUCK_TASK_MS = 30 * 60 * 1000;
 
 router.get("/generate/:orderId/status", requireAuth, async (req, res) => {
   const orderId = String(req.params.orderId ?? "");
@@ -568,6 +453,101 @@ router.get("/generate/:orderId/status", requireAuth, async (req, res) => {
     return true;
   }
 
+  // Review orders fan out to many kie tasks (one per photo). We poll every task
+  // OUTSIDE a transaction (network calls), then merge results atomically under a
+  // row lock so concurrent polls can't clobber each other. `receivedPhotoNumbers`
+  // is reused to track which task indices have finished.
+  if (order.serviceKey === "review") {
+    const taskIds = order.kieTaskIds ?? [];
+    if (taskIds.length === 0) {
+      // Tasks are still being created in the background.
+      res.json({ orderId: order.id, status: order.status, resultPhotos: order.resultPhotos ?? [] });
+      return;
+    }
+    try {
+      // Poll only indices not already known to be finished; mirror successes.
+      const known = new Set<number>(order.receivedPhotoNumbers ?? []);
+      const newlyDone: { idx: number; url: string | null }[] = [];
+      for (let i = 0; i < taskIds.length; i++) {
+        if (known.has(i)) continue;
+        const info = await kieGetTask(taskIds[i]!);
+        if (info.state === "success" && info.resultUrls.length > 0) {
+          const mirrored = await mirrorRemoteImage(info.resultUrls[0]!, req.log);
+          newlyDone.push({ idx: i, url: mirrored });
+        } else if (info.state === "fail") {
+          newlyDone.push({ idx: i, url: null });
+        }
+      }
+
+      // Merge under a row lock against the freshest state.
+      const merged = await db.transaction(async (tx) => {
+        const [fresh] = await tx
+          .select()
+          .from(ordersTable)
+          .where(eq(ordersTable.id, order.id))
+          .for("update")
+          .limit(1);
+        if (!fresh || fresh.status !== "processing") {
+          return { status: fresh?.status ?? "failed", photos: fresh?.resultPhotos ?? [], refunded: false };
+        }
+        const done = new Set<number>(fresh.receivedPhotoNumbers ?? []);
+        const photos = [...fresh.resultPhotos];
+        for (const n of newlyDone) {
+          if (done.has(n.idx)) continue;
+          done.add(n.idx);
+          if (n.url) photos.push(n.url);
+        }
+        const finished = done.size >= taskIds.length;
+        const aged = Date.now() - fresh.createdAt.getTime() > STUCK_TASK_MS;
+
+        let status: "processing" | "success" | "failed" = "processing";
+        let errorMessage: string | null = null;
+        if (photos.length > 0 && (finished || aged)) {
+          status = "success";
+        } else if (photos.length === 0 && (finished || aged)) {
+          status = "failed";
+          errorMessage = finished ? "Не удалось сгенерировать фото" : "Превышено время ожидания генерации";
+        }
+
+        await tx
+          .update(ordersTable)
+          .set({
+            resultPhotos: photos,
+            receivedPhotoNumbers: [...done],
+            status,
+            errorMessage,
+            completedAt: status === "processing" ? null : new Date(),
+          })
+          .where(eq(ordersTable.id, fresh.id));
+
+        let refunded = false;
+        if (status === "failed" && fresh.userId) {
+          await tx
+            .update(usersTable)
+            .set({
+              balance: sql`${usersTable.balance} + ${fresh.amount}`,
+              totalSpent: sql`greatest(${usersTable.totalSpent} - ${fresh.amount}, 0)`,
+            })
+            .where(eq(usersTable.id, fresh.userId));
+          refunded = true;
+        }
+        return { status, photos, refunded, errorMessage };
+      });
+
+      res.json({
+        orderId: order.id,
+        status: merged.status,
+        resultPhotos: merged.photos,
+        ...(merged.status === "failed" ? { errorMessage: merged.errorMessage, refunded: merged.refunded } : {}),
+      });
+      return;
+    } catch (err) {
+      req.log.error({ err, orderId: order.id }, "review status check failed");
+      res.json({ orderId: order.id, status: "processing", resultPhotos: order.resultPhotos ?? [] });
+      return;
+    }
+  }
+
   const ageMs = Date.now() - order.createdAt.getTime();
   if (ageMs > STUCK_TASK_MS) {
     await failAndRefund("Превышено время ожидания генерации");
@@ -576,7 +556,6 @@ router.get("/generate/:orderId/status", requireAuth, async (req, res) => {
   }
 
   if (!order.kieTaskId) {
-    // Review (n8n) orders have no kie task; the callback flips them to success.
     res.json({ orderId: order.id, status: order.status, resultPhotos: order.resultPhotos ?? [] });
     return;
   }

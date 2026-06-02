@@ -40,8 +40,9 @@ const DEFAULT_SERVICES = [
 ];
 
 /**
- * The canonical review locations. `promptFragment` carries the value forwarded
- * to n8n as the `location` of the generated selfie.
+ * The canonical review locations. `promptFragment` is a legacy single-prompt
+ * fallback; admins now add a list of full prompts per location via the admin
+ * panel (`prompts`), one of which is chosen at random per generated photo.
  */
 const REVIEW_LOCATIONS = [
   { name: "Селфи в квартире", promptFragment: "apartment", sortOrder: 1 },
