@@ -36,7 +36,7 @@ interface TariffRow {
 interface StyleRow {
   id: string; title: string; shortDescription: string; fullDescription: string;
   prompt: string;
-  category: string; price: number; previewImageUrl: string; exampleImages: string[];
+  category: string; price: number; previewImageUrl: string; referencePhotoUrl: string; exampleImages: string[];
   generationTime: number; rating: number; isActive: boolean; sortOrder: number; ordersCount: number;
   photosRequired: number;
 }
@@ -455,6 +455,7 @@ function StyleEditModal({ style, onClose, onSaved }: { style: Partial<StyleRow>;
     category: style.category ?? "Портрет",
     price: String(style.price ?? 0),
     previewImageUrl: style.previewImageUrl ?? "",
+    referencePhotoUrl: style.referencePhotoUrl ?? "",
     exampleImages: (style.exampleImages ?? []).join("\n"),
     generationTime: String(style.generationTime ?? 60),
     rating: String(style.rating ?? 4.9),
@@ -516,7 +517,7 @@ function StyleEditModal({ style, onClose, onSaved }: { style: Partial<StyleRow>;
         prompt: string;
         price: number;
         imageTaskId: string | null;
-      }>("/admin/styles/assist", { method: "POST", body: JSON.stringify({ idea }) });
+      }>("/admin/styles/assist", { method: "POST", body: JSON.stringify({ idea, referencePhotoUrl: form.referencePhotoUrl || undefined }) });
       setForm((f) => ({
         ...f,
         title: r.title,
@@ -549,6 +550,7 @@ function StyleEditModal({ style, onClose, onSaved }: { style: Partial<StyleRow>;
         category: form.category,
         price: Number(form.price),
         previewImageUrl: form.previewImageUrl,
+        referencePhotoUrl: form.referencePhotoUrl,
         exampleImages: form.exampleImages.split("\n").map((s) => s.trim()).filter(Boolean),
         generationTime: Number(form.generationTime),
         rating: Number(form.rating),
@@ -603,6 +605,13 @@ function StyleEditModal({ style, onClose, onSaved }: { style: Partial<StyleRow>;
           )}
         </div>
         {assistError && <div className="text-sm text-red-400">{assistError}</div>}
+        <div className="pt-2 border-t border-[#7C3AED]/20">
+          <div className="text-sm font-medium text-white mb-1">Фото-референс (по желанию)</div>
+          <div className="text-xs text-muted-foreground mb-2">
+            Если загрузить фото, превью будет сгенерировано на его основе. Фото сохраняется и используется постоянно — удаляется только кнопкой «Удалить».
+          </div>
+          <PreviewUploader value={form.referencePhotoUrl} onChange={(url) => upd("referencePhotoUrl", url)} />
+        </div>
       </div>
       <div className="grid grid-cols-2 gap-4">
         <Field label="Название"><Input value={form.title} onChange={(e) => upd("title", e.target.value)} className="bg-secondary border-border text-white" /></Field>
