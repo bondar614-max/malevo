@@ -4,9 +4,10 @@ import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Upload, X, Sparkles, Loader2, Download, MapPin, ImagePlus, Plus, Lock, Tag, User, Calendar, Layers, Minus } from "lucide-react";
+import { Upload, X, Sparkles, Loader2, MapPin, ImagePlus, Plus, Lock, Tag, User, Calendar, Layers, Minus } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useAuthModal } from "@/components/auth/AuthModal";
+import { PhotoCarousel } from "@/components/PhotoCarousel";
 
 interface ServiceDef {
   key: string;
@@ -598,17 +599,8 @@ function ResultView({ results, service, onReset }: { results: string[]; service:
         </h2>
         <p className="text-muted-foreground mt-2">Сохрани результаты — они уже у тебя в «Моих генерациях».</p>
       </div>
-      <div className={`grid gap-4 ${results.length === 1 ? "grid-cols-1 max-w-xl mx-auto" : results.length === 2 ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1 md:grid-cols-2 lg:grid-cols-3"}`}>
-        {results.map((url, i) => (
-          <div key={i} className="group relative bg-secondary rounded-2xl overflow-hidden border border-border">
-            <img src={url} alt={`Результат ${i + 1}`} className="w-full aspect-square object-cover" />
-            <a href={url} target="_blank" rel="noopener noreferrer" download
-              className="absolute bottom-3 right-3 bg-black/70 backdrop-blur text-white rounded-full p-3 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/90"
-              aria-label="Скачать">
-              <Download size={18} />
-            </a>
-          </div>
-        ))}
+      <div className="max-w-2xl mx-auto">
+        <PhotoCarousel photos={results} />
       </div>
       <div className="flex flex-col sm:flex-row gap-3 pt-4 justify-center">
         <Button size="lg" onClick={onReset} className="bg-gradient-primary text-white border-0">

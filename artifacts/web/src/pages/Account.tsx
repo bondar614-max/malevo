@@ -6,7 +6,9 @@ import { Label } from "@/components/ui/label";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { useAuth, apiRequest, type AuthUser } from "@/lib/auth";
-import { User as UserIcon, Wallet, ImageIcon, LogOut, Save, KeyRound } from "lucide-react";
+import { User as UserIcon, Wallet, ImageIcon, LogOut, Save, KeyRound, Images } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { PhotoCarousel } from "@/components/PhotoCarousel";
 
 interface OrderRow {
   id: string;
@@ -234,6 +236,7 @@ function BalanceTab({ user }: { user: AuthUser }) {
 function OrdersTab() {
   const [rows, setRows] = useState<OrderRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<{ title: string; photos: string[] } | null>(null);
 
   const load = useCallback(async () => {
     try { setRows(await apiRequest<OrderRow[]>("/auth/me/orders")); }
@@ -255,37 +258,63 @@ function OrdersTab() {
   }
 
   return (
-    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-      {rows.map((o) => {
-        const status = STATUS_LABELS[o.status] ?? { label: o.status, cls: "bg-secondary border-border text-muted-foreground" };
-        const preview = o.resultPhotos[0] || o.servicePreview || o.stylePreview;
-        const title = o.serviceTitle ?? o.styleTitle ?? "Удалено";
-        const subtitle = o.locationName ? `Локация: ${o.locationName}` : null;
-        return (
-          <div key={o.id} className="bg-card border border-border rounded-xl overflow-hidden flex flex-col">
-            <div className="aspect-[4/3] bg-secondary relative">
-              {preview ? <img src={preview} alt={title} className="w-full h-full object-cover" /> : (
-                <div className="w-full h-full flex items-center justify-center text-muted-foreground"><ImageIcon /></div>
-              )}
-              <span className={`absolute top-2 left-2 text-xs px-2 py-0.5 rounded border ${status.cls}`}>{status.label}</span>
-              {o.serviceKey && (
-                <span className="absolute top-2 right-2 text-[10px] px-2 py-0.5 rounded-full bg-[#7C3AED]/30 border border-[#7C3AED]/50 text-white uppercase tracking-wider">Услуга</span>
-              )}
-            </div>
-            <div className="p-4 flex-1 flex flex-col">
-              <div className="font-semibold text-white truncate">{title}</div>
-              {subtitle && <div className="text-xs text-muted-foreground truncate">{subtitle}</div>}
-              <div className="text-xs text-muted-foreground mt-1">{formatDate(o.createdAt)}</div>
-              <div className="mt-auto pt-3 flex items-center justify-between">
-                <span className="text-sm text-white">{o.amount.toFixed(2)} ₽</span>
-                {o.resultPhotos.length > 0 && (
-                  <a href={o.resultPhotos[0]} target="_blank" rel="noreferrer" className="text-xs text-[#7C3AED] hover:underline">Открыть</a>
+    <>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {rows.map((o) => {
+          const status = STATUS_LABELS[o.status] ?? { label: o.status, cls: "bg-secondary border-border text-muted-foreground" };
+          const preview = o.resultPhotos[0] || o.servicePreview || o.stylePreview;
+          const title = o.serviceTitle ?? o.styleTitle ?? "Удалено";
+          const subtitle = o.locationName ? `Локация: ${o.locationName}` : null;
+          const hasPhotos = o.resultPhotos.length > 0;
+          const openLightbox = () => hasPhotos && setLightbox({ title, photos: o.resultPhotos });
+          return (
+            <div key={o.id} className="bg-card border border-border rounded-xl overflow-hidden flex flex-col">
+              <button
+                type="button"
+                onClick={openLightbox}
+                disabled={!hasPhotos}
+                aria-label={hasPhotos ? `Открыть фото заказа «${title}»` : title}
+                className="aspect-[4/3] bg-secondary relative block w-full group disabled:cursor-default"
+              >
+                {preview ? <img src={preview} alt={title} className="w-full h-full object-cover" /> : (
+                  <div className="w-full h-full flex items-center justify-center text-muted-foreground"><ImageIcon /></div>
                 )}
+                <span className={`absolute top-2 left-2 text-xs px-2 py-0.5 rounded border ${status.cls}`}>{status.label}</span>
+                {o.serviceKey && (
+                  <span className="absolute top-2 right-2 text-[10px] px-2 py-0.5 rounded-full bg-[#7C3AED]/30 border border-[#7C3AED]/50 text-white uppercase tracking-wider">Услуга</span>
+                )}
+                {hasPhotos && o.resultPhotos.length > 1 && (
+                  <span className="absolute bottom-2 right-2 flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-black/70 backdrop-blur text-white">
+                    <Images size={12} /> {o.resultPhotos.length} фото
+                  </span>
+                )}
+              </button>
+              <div className="p-4 flex-1 flex flex-col">
+                <div className="font-semibold text-white truncate">{title}</div>
+                {subtitle && <div className="text-xs text-muted-foreground truncate">{subtitle}</div>}
+                <div className="text-xs text-muted-foreground mt-1">{formatDate(o.createdAt)}</div>
+                <div className="mt-auto pt-3 flex items-center justify-between">
+                  <span className="text-sm text-white">{o.amount.toFixed(2)} ₽</span>
+                  {hasPhotos && (
+                    <button type="button" onClick={openLightbox} className="text-xs text-[#7C3AED] hover:underline">
+                      {o.resultPhotos.length > 1 ? "Смотреть все фото" : "Открыть"}
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
-        );
-      })}
-    </div>
+          );
+        })}
+      </div>
+
+      <Dialog open={!!lightbox} onOpenChange={(v) => !v && setLightbox(null)}>
+        <DialogContent className="max-w-3xl bg-card border-border">
+          <DialogHeader>
+            <DialogTitle className="text-white">{lightbox?.title}</DialogTitle>
+          </DialogHeader>
+          {lightbox && <PhotoCarousel photos={lightbox.photos} aspectClassName="aspect-[3/4]" />}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
