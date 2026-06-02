@@ -4,7 +4,7 @@ import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Upload, X, Sparkles, Loader2, Download, MapPin, ImagePlus, Plus } from "lucide-react";
+import { Upload, X, Sparkles, Loader2, Download, MapPin, ImagePlus, Plus, Lock, Tag, User, Calendar, Layers, Minus } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useAuthModal } from "@/components/auth/AuthModal";
 
@@ -55,6 +55,11 @@ export default function Service() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [orderId, setOrderId] = useState<string | null>(null);
   const [results, setResults] = useState<string[]>([]);
+  // Review-only inputs
+  const [item, setItem] = useState("");
+  const [gender, setGender] = useState<"female" | "male">("female");
+  const [age, setAge] = useState<string | null>(null);
+  const [sets, setSets] = useState(1);
 
   useEffect(() => {
     let cancel = false;
@@ -102,14 +107,20 @@ export default function Service() {
     return () => { stop = true; window.clearInterval(interval); };
   }, [phase, orderId, token, refresh]);
 
-  const requiresLocation = service?.key === "review";
+  const isReview = service?.key === "review";
+  const requiresLocation = isReview;
   const max = service?.photosMax ?? 1;
   const min = service?.photosMin ?? 1;
   const canAddMore = photos.length < max;
   const ready =
     photos.length >= min &&
     photos.length <= max &&
-    (!requiresLocation || !!selectedLocationId);
+    (!isReview ||
+      (!!selectedLocationId &&
+        item.trim().length > 0 &&
+        gender === "female" &&
+        !!age &&
+        sets >= 1));
   const busy = phase === "uploading" || phase === "processing";
 
   function addFiles(files: File[]) {
@@ -130,9 +141,17 @@ export default function Service() {
     if (!user || !token) { open("register"); return; }
     if (!service) return;
     if (!ready) {
-      setError(requiresLocation && !selectedLocationId
-        ? "Выберите локацию"
-        : `Загрузите от ${min} до ${max} фото`);
+      if (photos.length < min || photos.length > max) {
+        setError(min === max ? `Загрузите ${min} фото` : `Загрузите от ${min} до ${max} фото`);
+      } else if (isReview && !item.trim()) {
+        setError("Укажите название одежды");
+      } else if (isReview && !selectedLocationId) {
+        setError("Выберите локацию");
+      } else if (isReview && !age) {
+        setError("Выберите возраст");
+      } else {
+        setError("Заполните все поля формы");
+      }
       return;
     }
     if (user.balance < service.price) {
@@ -144,6 +163,12 @@ export default function Service() {
     const form = new FormData();
     form.append("serviceKey", service.key);
     if (selectedLocationId) form.append("locationId", selectedLocationId);
+    if (isReview) {
+      form.append("item", item.trim());
+      form.append("gender", gender);
+      form.append("age", age ?? "random");
+      form.append("sets", String(sets));
+    }
     photos.forEach((f) => form.append("photos", f, f.name));
 
     try {
@@ -169,6 +194,10 @@ export default function Service() {
     setResults([]);
     setError(null);
     setPhotos([]);
+    setItem("");
+    setAge(null);
+    setSets(1);
+    setSelectedLocationId(null);
   }
 
   return (
@@ -253,7 +282,91 @@ export default function Service() {
                   ))}
                   {canAddMore && <AddPhotoButton onChange={(files) => addFiles(files)} disabled={busy} />}
                 </div>
+
+                {isReview && (
+                  <div className="pt-2 border-t border-border">
+                    <label htmlFor="review-item" className="text-sm font-semibold text-white flex items-center gap-2">
+                      <Tag className="w-4 h-4" style={{ color: service.accentTo }} /> Название одежды
+                    </label>
+                    <p className="text-xs text-muted-foreground mt-1 mb-2">Например: «Чёрное платье миди» или «Джинсовая куртка оверсайз».</p>
+                    <input
+                      id="review-item"
+                      type="text"
+                      value={item}
+                      maxLength={255}
+                      disabled={busy}
+                      onChange={(e) => setItem(e.target.value)}
+                      placeholder="Введите название одежды"
+                      className="w-full rounded-xl bg-secondary border border-border px-4 py-3 text-white placeholder:text-muted-foreground focus:outline-none focus:border-[#7C3AED] disabled:opacity-50"
+                    />
+                  </div>
+                )}
               </div>
+
+              {/* Gender (review) */}
+              {isReview && (
+                <div className="bg-card border border-border rounded-3xl p-6 md:p-8 space-y-4">
+                  <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                    <User className="w-5 h-5" style={{ color: service.accentFrom }} /> Пол
+                  </h2>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setGender("female")}
+                      disabled={busy}
+                      className={`rounded-xl border-2 py-4 font-semibold transition-all ${
+                        gender === "female"
+                          ? "border-[#7C3AED] bg-[#7C3AED]/10 text-white shadow-[0_0_20px_rgba(124,58,237,0.3)]"
+                          : "border-border text-muted-foreground hover:border-[#7C3AED]/50"
+                      }`}
+                    >
+                      Женский
+                    </button>
+                    <button
+                      type="button"
+                      disabled
+                      title="Скоро"
+                      className="rounded-xl border-2 border-border py-4 font-semibold text-muted-foreground/60 bg-secondary/30 cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      <Lock size={16} /> Мужской
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Age (review) */}
+              {isReview && (
+                <div className="bg-card border border-border rounded-3xl p-6 md:p-8 space-y-4">
+                  <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                    <Calendar className="w-5 h-5" style={{ color: service.accentTo }} /> Выберите возраст
+                  </h2>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    {[
+                      { value: "21-30", label: "21–30" },
+                      { value: "30-45", label: "30–45" },
+                      { value: "45+", label: "45+" },
+                      { value: "random", label: "Случайный возраст" },
+                    ].map((opt) => {
+                      const selected = age === opt.value;
+                      return (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => setAge(opt.value)}
+                          disabled={busy}
+                          className={`rounded-xl border-2 py-4 px-2 text-sm font-semibold transition-all ${
+                            selected
+                              ? "border-[#7C3AED] bg-[#7C3AED]/10 text-white shadow-[0_0_20px_rgba(124,58,237,0.3)]"
+                              : "border-border text-muted-foreground hover:border-[#7C3AED]/50"
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Locations for review */}
               {requiresLocation && (
@@ -306,6 +419,55 @@ export default function Service() {
                       })}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Sets (review) */}
+              {isReview && (
+                <div className="bg-card border border-border rounded-3xl p-6 md:p-8 space-y-4">
+                  <div>
+                    <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                      <Layers className="w-5 h-5" style={{ color: service.accentFrom }} /> Количество комплектов
+                    </h2>
+                    <p className="text-sm text-muted-foreground mt-1">1 комплект = 3 фото. Максимум 10 комплектов.</p>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center rounded-xl border border-border bg-secondary overflow-hidden">
+                      <button
+                        type="button"
+                        disabled={busy || sets <= 1}
+                        onClick={() => setSets((s) => Math.max(1, s - 1))}
+                        className="px-4 py-3 text-white hover:bg-white/5 disabled:opacity-30"
+                        aria-label="Меньше"
+                      >
+                        <Minus size={18} />
+                      </button>
+                      <input
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={sets}
+                        disabled={busy}
+                        onChange={(e) => {
+                          const n = Math.floor(Number(e.target.value));
+                          setSets(Number.isFinite(n) ? Math.min(10, Math.max(1, n)) : 1);
+                        }}
+                        className="w-16 text-center bg-transparent text-white text-lg font-bold focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                      <button
+                        type="button"
+                        disabled={busy || sets >= 10}
+                        onClick={() => setSets((s) => Math.min(10, s + 1))}
+                        className="px-4 py-3 text-white hover:bg-white/5 disabled:opacity-30"
+                        aria-label="Больше"
+                      >
+                        <Plus size={18} />
+                      </button>
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      Итого: <span className="text-white font-semibold">{sets * 3} фото</span>
+                    </div>
+                  </div>
                 </div>
               )}
 
