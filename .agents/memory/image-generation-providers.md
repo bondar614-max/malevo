@@ -31,3 +31,12 @@ removed. `kieTaskId` column is now unused for new orders.
 
 **Note:** `OPENAI_API_KEY` is an OpenRouter key (`sk-or-`), reused for both the models list
 and image generation.
+
+**Model compatibility caveat:** an OpenRouter model advertising `image` output modality does
+NOT guarantee it works with our chat-completions + data-URL-input request. Verified June 2026:
+`google/gemini-2.5-flash-image` works; `openai/gpt-5.4-image-2` (and OpenAI `*-image*` models)
+reject our image input with HTTP 400 "does not represent a valid image". `kie:nano-banana-pro`
+(default) is the safe choice. **Why:** an admin picking a bad model in prod silently broke a
+whole category. **How to apply:** generation retries transient failures but treats hard 4xx as
+non-retryable; failed orders log the raw provider cause server-side but show users a generic RU
+message. If a category "stops working" in prod, first check its `model:<cat>` in `app_settings`.
