@@ -34,3 +34,23 @@ export async function uploadBufferToStorage(
 export function isLocalStorageUrl(url: string): boolean {
   return url.startsWith("/api/storage/objects/") || url.startsWith("/api/static/");
 }
+
+/**
+ * Reads the bytes of an object we previously stored, given its serving path
+ * (e.g. `/api/storage/objects/admin/<uuid>`). Returns the buffer plus its
+ * content type so the caller can re-upload it elsewhere (e.g. to kie.ai).
+ */
+export async function downloadStorageObject(
+  servingUrl: string,
+): Promise<{ buffer: Buffer; contentType: string }> {
+  const prefix = "/api/storage";
+  if (!servingUrl.startsWith(`${prefix}/objects/`)) {
+    throw new Error("Not a storage object url");
+  }
+  const objectPath = servingUrl.slice(prefix.length);
+  const file = await svc.getObjectEntityFile(objectPath);
+  const [metadata] = await file.getMetadata();
+  const [buffer] = await file.download();
+  const contentType = (metadata.contentType as string | undefined) ?? "image/png";
+  return { buffer, contentType };
+}

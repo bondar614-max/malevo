@@ -4,8 +4,8 @@ import { eq, desc, sql } from "drizzle-orm";
 import { z } from "zod";
 import { hashPassword, requireAuth } from "../lib/auth";
 import { getOpenAI, assistModel } from "../lib/openai";
-import { kieCreateNanoBananaProTask, kieGetTask } from "../lib/kie";
-import { uploadBufferToStorage } from "../lib/storage-helpers";
+import { kieCreateNanoBananaProTask, kieGetTask, kieUploadFile } from "../lib/kie";
+import { uploadBufferToStorage, downloadStorageObject } from "../lib/storage-helpers";
 
 const router: IRouter = Router();
 
@@ -170,6 +170,7 @@ const StyleSchema = z.object({
   category: z.string().min(1),
   price: z.number().nonnegative(),
   previewImageUrl: z.string().min(1),
+  referencePhotoUrl: z.string().default(""),
   exampleImages: z.array(z.string()).default([]),
   generationTime: z.number().int().positive().default(60),
   rating: z.number().min(0).max(5).default(4.9),
@@ -201,6 +202,7 @@ router.post("/admin/styles", async (req, res) => {
     category: d.category,
     price: d.price.toFixed(2),
     previewImageUrl: d.previewImageUrl,
+    referencePhotoUrl: d.referencePhotoUrl,
     exampleImages: d.exampleImages,
     generationTime: d.generationTime,
     rating: d.rating.toFixed(2),
@@ -224,6 +226,7 @@ router.patch("/admin/styles/:id", async (req, res) => {
   if (d.category !== undefined) updates.category = d.category;
   if (d.price !== undefined) updates.price = d.price.toFixed(2);
   if (d.previewImageUrl !== undefined) updates.previewImageUrl = d.previewImageUrl;
+  if (d.referencePhotoUrl !== undefined) updates.referencePhotoUrl = d.referencePhotoUrl;
   if (d.exampleImages !== undefined) updates.exampleImages = d.exampleImages;
   if (d.generationTime !== undefined) updates.generationTime = d.generationTime;
   if (d.rating !== undefined) updates.rating = d.rating.toFixed(2);
@@ -245,6 +248,7 @@ const DEFAULT_STYLE_PRICE = 21;
 
 const AssistSchema = z.object({
   idea: z.string().min(3).max(4000),
+  referencePhotoUrl: z.string().optional(),
 });
 
 const AssistResultSchema = z.object({
@@ -263,6 +267,7 @@ router.post("/admin/styles/assist", async (req, res) => {
     return;
   }
   const idea = parsed.data.idea.trim();
+  const referencePhotoUrl = parsed.data.referencePhotoUrl?.trim() ?? "";
 
   let result: z.infer<typeof AssistResultSchema>;
   try {
@@ -304,9 +309,23 @@ router.post("/admin/styles/assist", async (req, res) => {
 
   let imageTaskId: string | null = null;
   try {
+    // When the admin supplied a reference photo, generate the preview from it
+    // (image-to-image, applying the style's transform prompt). Otherwise fall
+    // back to pure text-to-image using the cover prompt.
+    let kieImageUrls: string[] = [];
+    if (referencePhotoUrl) {
+      try {
+        const { buffer, contentType } = await downloadStorageObject(referencePhotoUrl);
+        const ext = contentType.split("/")[1] ?? "png";
+        const kieUrl = await kieUploadFile(buffer, `style-ref.${ext}`, contentType);
+        kieImageUrls = [kieUrl];
+      } catch (err) {
+        req.log.error({ err, referencePhotoUrl }, "assist reference photo upload failed; falling back to text-to-image");
+      }
+    }
     imageTaskId = await kieCreateNanoBananaProTask({
-      prompt: result.imagePrompt,
-      imageUrls: [],
+      prompt: kieImageUrls.length > 0 ? result.prompt : result.imagePrompt,
+      imageUrls: kieImageUrls,
       aspectRatio: "3:4",
       resolution: "2K",
     });

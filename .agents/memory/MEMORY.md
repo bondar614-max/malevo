@@ -1,1 +1,2 @@
 - [OpenAI/OpenRouter key handling](openrouter-key.md) — project's OPENAI_API_KEY is an OpenRouter key (sk-or-); client switches base URL + model namespace by prefix.
+- [kie.ai image-to-image input](kie-image-input.md) — image_input must be kie-hosted (kieUploadFile); our /api/storage paths won't work. Read bytes via downloadStorageObject first.

@@ -9,6 +9,7 @@ export const stylesTable = pgTable("styles", {
   negativePrompt: text("negative_prompt").notNull().default(""),
   price: numeric("price", { precision: 10, scale: 2 }).notNull().default("0"),
   previewImageUrl: varchar("preview_image_url", { length: 500 }).notNull(),
+  referencePhotoUrl: varchar("reference_photo_url", { length: 500 }).notNull().default(""),
   exampleImages: jsonb("example_images").$type<string[]>().notNull().default([]),
   generationTime: integer("generation_time").notNull().default(60),
   isActive: boolean("is_active").notNull().default(true),
