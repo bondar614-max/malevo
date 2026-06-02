@@ -1,0 +1,109 @@
+Генерация фотоотзывов (photoreviews) — техническая спецификация
+Назначение
+Пользователь загружает фото товара + задаёт параметры (пол, возраст, локация) → система через внешний n8n-воркфлоу генерирует реалистичные фото «человек с товаром» для отзывов на маркетплейсах. Доставка результатов — асинхронная, в реальном времени через SSE.
+Архитектурный принцип
+Сервер Express не генерирует изображения. Он только: проверяет кредиты, проксирует запрос в n8n, принимает колбэки с готовыми фото, сохраняет их в БД и пушит на фронт через SSE. Вся ИИ-логика (vision-анализ, сборка промпта, генерация, списание кредитов) живёт в n8n.
+
+1. Фронтенд — client/src/pages/Dashboard.tsx, вкладка «Генерация»
+Функция handleGenerate (~стр. 1178):
+1. Валидация полей: gender, age, shootLocation, item (обязательны).
+2. Пред-проверка баланса на клиенте: credits < photoreviewThreshold (порог берётся из /api/credit-thresholds, дефолт 200). Если мало — тост + открытие модалки покупки, запрос не уходит.
+3. Если загружено фото — сжатие через compressImage (@/lib/imageCompression) и конвертация в base64 (toBase64, берётся часть после запятой из dataURL).
+4. POST /api/generate с телом:
+{
+"action": "generate",
+"email": "...",
+"gender": "...",
+"age": "...",
+"location": "...",
+"sets": <число наборов>,
+"item": "куртка",
+"photo_base64": "<...>", // опционально
+"photo_name": "...",
+"photo_type": "image/..."
+}
+
+5. Ответ: { success, generation_id }. По generation_id сразу открывается SSE: startStream(generation_id, sets * 3) — ожидается 3 фото на каждый набор (sets).
+SSE на клиенте (startStream, ~стр. 1117):
+* new EventSource('/api/photos/stream/<generation_id>').
+* onmessage: парсит Photo, добавляет в livePhotos, инкрементит счётчик, дёргает refetchCredits().
+* Когда count >= expectedCount: закрывает поток, инвалидирует ["/api/photos", userEmail, "review"], тост «Готово», (опц.) браузерное уведомление, через 800мс переключает на вкладку «Мои фото».
+* Safety-таймаут 20 минут: если пришло частично — показывает «получено N из M», если ноль — «время ожидания истекло».
+* onerror — нефатально (сервер мог перезапуститься, EventSource переподключается сам).
+
+2. Бэкенд — POST /api/generate (server/routes.ts, ~стр. 509)
+1. Rate limit: 15 запросов/мин на IP (generate:<ip>), иначе 429.
+2. Ветка action === "item_preview" (не отзыв): fire-and-forget POST на webhook ...-wear, ответ {success:true}. К отзывам отношения не имеет.
+3. Пред-проверка кредитов (серверная): storage.getAiServiceSettings().photoreviewCreditThreshold vs fetchUserCredits(email). Если меньше — 402 с телом { message, insufficientCredits:true, required, current }.
+4. Генерирует generationId = randomUUID(), формирует callbackUrl = <baseUrl>/api/photos/callback.
+5. Сразу отвечает клиенту { success:true, generation_id } (до завершения генерации).
+6. Затем асинхронно (fetchN8nWithRetry, mode "long") шлёт POST в n8n webhook ...-photo:
+{ ...весь req.body, "generation_id": "...", "callback_url": "...", "callback_secret": CALLBACK_SECRET }
+
+* mode "long": таймаут 120с, без ретраев (ретрай породил бы дубль-запуск воркфлоу). При 5xx/ошибке/"code":0 — алерт в Telegram (sendTelegramAlert), но фото всё равно придут через колбэк.
+Важно про режимы (fetchN8nWithRetry, ~стр. 247):
+* "ack" — n8n быстро отвечает «принято», таймаут 15с, до 3 попыток, ретраи на сетевых/5xx.
+* "long" — соединение держится до конца воркфлоу, таймаут 120с, 0 ретраев.
+* Сейчас /api/generate использует "long". Фото в любом случае приходят через /api/photos/callback, тело ответа n8n для картинок не парсится.
+
+3. Колбэк от n8n — POST /api/photos/callback (~стр. 701)
+* Защита: заголовок X-Callback-Secret должен совпасть с CALLBACK_SECRET (env). Иначе 401.
+* Тело: { generation_id, image_url, email, item, gender, age, photo_number }.
+* Обязательны generation_id и image_url, иначе 400.
+* Вызывает saveAndEmit(...) → сохранение + SSE-пуш.
+* Доп. логика статусов фотосессий (не отзывов): при photo_number === 1 → статус сессии awaiting_approval + событие first_photo; при photo_number >= 12 и статусе approved → completed. Для отзывов сессии нет, эта ветка просто не находит запись.
+saveAndEmit (~стр. 202):
+* Дедуп: если фото с такой парой (generationId, photoNumber) уже есть (getPhotoByGenerationAndNumber) и photoNumber > 0 — пропускает вставку (защита от повторных прогонов n8n).
+* storage.savePhoto(...) → INSERT в таблицу photos.
+* sseEmit(generationId, photo) — пуш в открытые SSE-соединения (data: <json photo>).
+
+4. SSE-инфраструктура (сервер, ~стр. 179–200, 674)
+* sseClients: Map<generationId, Set<Response>> — in-memory реестр подключений.
+* GET /api/photos/stream/:id: ставит заголовки event-stream, flushHeaders(), регистрирует res в Set, heartbeat : ping каждые 30с, очистка на close.
+* sseEmit — отправляет фото как обычное data: сообщение (его ловит onmessage).
+* sseEmitEvent — именованные события (event: <type>), используется для first_photo у фотосессий.
+* ⚠️ Состояние только в памяти: при рестарте сервера активные соединения рвутся; клиент переподключается, но фото, пришедшие в окно рестарта, попадут в БД и подтянутся через инвалидацию /api/photos.
+
+5. Хранение и выборка
+Таблица photos (shared/schema.ts, стр. 16): id, email, imageUrl, item, gender('') , age(''), generationId, photoNumber(0), createdAt.
+Ключевое отличие отзыв vs фотосессия:
+* Отзывы и фотосессии лежат в одной таблице photos.
+* Отзыв = фото, чей generationId НЕ привязан ни к одной строке photosessions.
+* getReviewPhotosByEmail (server/storage.ts, стр. 128): WHERE email = ? AND NOT EXISTS (SELECT 1 FROM photosessions WHERE photosessions.generation_id = photos.generation_id), сортировка по createdAt DESC.
+* GET /api/photos?email=...&source=review → отзывы; без source → все фото пользователя.
+
+6. Кредиты (источник правды — n8n, не БД)
+* fetchUserCredits(email) (~стр. 128): POST на webhook ...-credit с {email, action:"get_credits"}; парсит число из credits|balance|count|amount или из «голого» текста.
+* addUserCredits(email, amount) (~стр. 157): read-modify-write — читает текущий баланс, пишет current+amount через {action:"set_credits", amount:newBalance}. ⚠️ Не атомарно (есть TODO на add_credits).
+* Списание за генерацию фотоотзывов выполняется внутри n8n, сервер его не делает. Порог photoreviewCreditThreshold настраивается админом в ai_service_settings.
+
+7. Внешние эндпоинты n8n (база https://server.neuroprime.ru/webhook/)
+Назначение	Полный URL
+Генерация фотоотзывов (/api/generate)	https://server.neuroprime.ru/webhook/bf332c02-f454-4e5d-9b3c-7c9d08ed0405-photo
+Баланс кредитов get/set (fetchUserCredits, addUserCredits)	https://server.neuroprime.ru/webhook/bf332c02-f454-4e5d-9b3c-7c9d08ed0405-credit
+item_preview / «примерка»	https://server.neuroprime.ru/webhook/bf332c02-f454-4e5d-9b3c-7c9d08ed0405-wear
+Подписка (/api/subscription)	https://server.neuroprime.ru/webhook/bf332c02-f454-4e5d-9b3c-7c9d08ed0405-subscribe
+Логин (/api/auth/login)	https://server.neuroprime.ru/webhook/422103e6-5ce9-4007-89f0-97e3b4adfcde
+Регистрация (/api/auth/register, добавление юзера)	https://server.neuroprime.ru/webhook/25849a82-6f09-4fbf-8413-93d61c24fbb7
+Список пользователей (admin users details)	https://server.neuroprime.ru/webhook/320b3473-737b-4bd6-a790-8ab33d61260a
+Уведомление: покупка кредитов	https://server.neuroprime.ru/webhook/f9b88c15-8d8d-4c08-a301-c126dcecceb0-buy-credit
+Уведомление: покупка подписки	https://server.neuroprime.ru/webhook/f9b88c15-8d8d-4c08-a301-c126dcecceb0-buy-subscribe
+Фотосессия: генерация (отдельный флоу)	https://server.neuroprime.ru/webhook/84782778-5c87-4a94-8dd9-485698d961ae
+Фотосессия: подтверждение/догенерация (approval)	https://server.neuroprime.ru/webhook/b04b5561-2720-43dc-96e5-5a4acdfbd504
+Примечания:
+* Webhook'и с префиксом bf332c02-... — это один n8n-узел с разными action-суффиксами (-photo, -credit, -wear, -subscribe).
+* Есть ещё плейсхолдер PHOTOSHOOT_MODEL_WEBHOOK = "PLACEHOLDER_WEBHOOK_URL" в /api/photoshoot/model (~стр. 601) — реальный URL туда пока не вписан (TODO).
+* Все эти URL живут прямо в коде server/routes.ts (захардкожены, не в env).
+Именно для генерации фотоотзывов используется только первый — ...-photo (плюс ...-credit для проверки баланса).
+
+Колбэк-эндпоинт сервера для n8n: POST /api/photos/callback (заголовок X-Callback-Secret).
+
+Полный жизненный цикл (одной строкой)
+Фронт handleGenerate → POST /api/generate (проверка кредитов, UUID) → мгновенный ответ generation_id + открытие SSE → сервер шлёт задачу в n8n (...-photo, long) → n8n генерит и на каждое фото шлёт POST /api/photos/callback → saveAndEmit (дедуп + INSERT в photos + SSE-пуш) → фронт по onmessage добавляет фото живьём, по достижении sets*3 закрывает поток и уходит в «Мои фото».
+Подводные камни для будущих правок
+* SSE-состояние в памяти → не переживает рестарт; всегда дублируй доставку через инвалидацию /api/photos.
+* long mode = без ретраев намеренно; ретрай = дубль-генерация.
+* Отзыв определяется отсутствием связи с photosessions, отдельного флага типа нет.
+* Кредиты живут в n8n; локальная БД их не хранит, addUserCredits неатомарен.
+* Ожидаемое число фото на фронте жёстко = sets * 3; если n8n начнёт отдавать другое количество — счётчик завершения сломается.
+Изменений в код не вносил — это только разбор раздела.
