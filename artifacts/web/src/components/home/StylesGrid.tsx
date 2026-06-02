@@ -112,11 +112,11 @@ export function StylesGrid() {
                       </div>
                     </div>
                     
-                    <div className="mt-auto pt-4 border-t border-border flex items-center justify-between gap-4">
+                    <div className="mt-auto pt-4 border-t border-border flex flex-col gap-3">
                       <div className="font-bold text-xl text-gradient whitespace-nowrap">
                         от {style.price} ₽
                       </div>
-                      <Link href={`/generate/${style.id}`} className="flex-1">
+                      <Link href={`/generate/${style.id}`} className="w-full">
                         <Button className="w-full bg-gradient-primary text-white border-0 hover:opacity-90 shadow-[0_0_15px_rgba(124,58,237,0.3)]">
                           🚀 Сгенерировать
                         </Button>

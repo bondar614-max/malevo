@@ -87,13 +87,13 @@ export function ServicesBlock() {
                           ~{s.generationTime}с
                         </span>
                       </div>
-                      <div className="flex items-center justify-between mt-auto">
-                        <div>
+                      <div className="flex flex-wrap items-center justify-between gap-3 mt-auto">
+                        <div className="min-w-0">
                           <div className="text-xs text-muted-foreground">от</div>
-                          <div className="text-3xl font-bold text-white">{s.price.toFixed(0)} ₽</div>
+                          <div className="text-3xl font-bold text-white whitespace-nowrap">{s.price.toFixed(0)} ₽</div>
                         </div>
                         <Button
-                          className="text-white border-0 shadow-lg"
+                          className="text-white border-0 shadow-lg shrink-0 whitespace-nowrap"
                           style={{ background: `linear-gradient(135deg, ${s.accentFrom}, ${s.accentTo})` }}
                         >
                           Заказать <ArrowRight size={16} className="ml-2" />
