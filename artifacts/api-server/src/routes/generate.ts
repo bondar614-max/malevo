@@ -316,6 +316,9 @@ function composePhotoshootPrompt(input: {
     `Product being photographed: ${input.productName}.`,
     "The first two reference images show the selected model. The next five reference images show the product from the front, side, back, texture and detail views.",
     "Preserve the exact facial identity, body proportions, product design, colors, material, texture and distinctive details accurately.",
+    "Commercial marketplace safety: the model is an adult woman aged 25+, fully clothed, styled modestly and naturally for Wildberries ecommerce.",
+    "Do not create nudity, underwear-only styling, lingerie, swimwear, transparent clothing, erotic poses, cleavage emphasis, minors, violence or any sensitive content.",
+    "If a product reference contains underwear, bare skin or a mannequin/body crop, use it only as a garment construction reference and place the final product in a fully clothed neutral fashion outfit.",
   ].filter(Boolean).join(" ");
 }
 
@@ -801,7 +804,16 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
             anchor = generated[0] ?? null;
             if (!anchor) continue;
             if (approvalSettings!.mode === "manual") break;
-            const evaluation = await evaluateAnchorPhoto(approvalSettings!.visionModel, serviceInputs, anchor);
+            let evaluation: { accepted: boolean; feedback: string };
+            try {
+              evaluation = await evaluateAnchorPhoto(approvalSettings!.visionModel, serviceInputs, anchor);
+            } catch (err) {
+              req.log.error(
+                { err, orderId, visionModel: approvalSettings!.visionModel },
+                "photoshoot anchor evaluation failed; continuing with generated anchor",
+              );
+              break;
+            }
             if (evaluation.accepted) break;
             correction = `Correct the following problems from the previous attempt: ${evaluation.feedback}`;
           }

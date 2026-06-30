@@ -213,7 +213,20 @@ async function fetchImage(url: string): Promise<GenImage | null> {
   }
 }
 
-/** Poll a kie task until it succeeds (returns urls), fails or times out (empty). */
+function appendKieSafetyGuidance(prompt: string): string {
+  return [
+    prompt,
+    [
+      "Safety requirements for the generation provider:",
+      "all people are adults aged 25+; the scene is a neutral commercial ecommerce fashion photoshoot;",
+      "the person is fully clothed in ordinary marketplace clothing;",
+      "no nudity, underwear-only looks, lingerie, swimwear, transparent fabric, erotic styling, sexualized posing, cleavage emphasis, minors, violence or sensitive content;",
+      "keep the styling modest and product-focused while preserving the requested garment accurately.",
+    ].join(" "),
+  ].join("\n\n");
+}
+
+/** Poll a kie task until it succeeds (returns urls), fails with a provider reason or times out (empty). */
 async function waitForKieResultUrls(taskId: string): Promise<string[]> {
   const deadline = Date.now() + 8 * 60 * 1000;
   while (Date.now() < deadline) {
@@ -225,7 +238,9 @@ async function waitForKieResultUrls(taskId: string): Promise<string[]> {
       continue;
     }
     if (info.state === "success" && info.resultUrls.length > 0) return info.resultUrls;
-    if (info.state === "fail") return [];
+    if (info.state === "fail") {
+      throw new Error(`kie task failed: ${info.errorMessage?.trim() || "generation failed"}`);
+    }
     await sleep(5000);
   }
   return [];
@@ -243,7 +258,7 @@ async function generateViaKie(opts: GenerateOpts): Promise<GenImage[]> {
     urls.push(await kieUploadFile(im.buffer, `src_${Date.now()}_${i}.${ext}`, im.mime));
   }
   const taskId = await kieCreateNanoBananaProTask({
-    prompt: opts.prompt,
+    prompt: appendKieSafetyGuidance(opts.prompt),
     imageUrls: urls,
     aspectRatio: "3:4",
     resolution: "2K",
