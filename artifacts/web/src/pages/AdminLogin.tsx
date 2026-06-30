@@ -43,7 +43,7 @@ export default function AdminLogin() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-white">Админ-панель</h1>
-            <p className="text-sm text-muted-foreground">PhotoGen AI</p>
+            <p className="text-sm text-muted-foreground">MALEVO</p>
           </div>
         </div>
 

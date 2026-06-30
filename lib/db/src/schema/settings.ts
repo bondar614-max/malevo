@@ -1,10 +1,11 @@
-import { pgTable, varchar, text, timestamp } from "drizzle-orm/pg-core";
+import { mysqlTable, varchar, text } from "drizzle-orm/mysql-core";
+import { dateTimeColumn } from "./_helpers";
 
 /** Generic key/value store for app-wide configuration (e.g. AI model per category). */
-export const appSettingsTable = pgTable("app_settings", {
+export const appSettingsTable = mysqlTable("app_settings", {
   key: varchar("key", { length: 128 }).primaryKey(),
   value: text("value").notNull().default(""),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: dateTimeColumn("updated_at").notNull().defaultNow(),
 });
 
 export type AppSetting = typeof appSettingsTable.$inferSelect;

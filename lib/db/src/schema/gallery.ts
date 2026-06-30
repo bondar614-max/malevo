@@ -1,13 +1,14 @@
-import { pgTable, uuid, varchar, integer, timestamp } from "drizzle-orm/pg-core";
+import { mysqlTable, varchar, int } from "drizzle-orm/mysql-core";
+import { dateTimeColumn, uuidColumn } from "./_helpers";
 import { stylesTable } from "./styles";
 
-export const galleryTable = pgTable("gallery", {
-  id: uuid("id").primaryKey().defaultRandom(),
+export const galleryTable = mysqlTable("gallery", {
+  id: uuidColumn("id").primaryKey(),
   imageUrl: varchar("image_url", { length: 500 }).notNull(),
-  styleId: uuid("style_id").references(() => stylesTable.id).notNull(),
+  styleId: varchar("style_id", { length: 36 }).references(() => stylesTable.id).notNull(),
   styleTitle: varchar("style_title", { length: 255 }).notNull(),
-  sortOrder: integer("sort_order").notNull().default(0),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  sortOrder: int("sort_order").notNull().default(0),
+  createdAt: dateTimeColumn("created_at").notNull().defaultNow(),
 });
 
 export type GalleryItem = typeof galleryTable.$inferSelect;

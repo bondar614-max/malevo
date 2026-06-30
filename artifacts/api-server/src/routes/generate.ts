@@ -1,12 +1,19 @@
 import { Router, type IRouter } from "express";
+import { randomUUID } from "node:crypto";
 import multer from "multer";
-import { db, ordersTable, stylesTable, usersTable, servicesTable, locationsTable } from "@workspace/db";
+import { z } from "zod";
+import { db, ordersTable, stylesTable, usersTable, servicesTable, locationsTable, appSettingsTable } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
 import { requireAuth } from "../lib/auth";
-import { uploadBufferToStorage } from "../lib/storage-helpers";
+import { downloadStorageObject, uploadBufferToStorage } from "../lib/storage-helpers";
+import { affectedRows } from "../lib/db-result";
 import { generateImages, getCategoryModel, type GenImage } from "../lib/imageGen";
+import { DEFAULT_SUPPORT_MODEL, getOpenAI } from "../lib/openai";
 
 const REVIEW_AGES = new Set(["21-30", "30-45", "45+", "random"]);
+const PHOTOSHOOT_TYPES = new Set(["studio", "street"]);
+const PHOTOSHOOT_SEASONS = new Set(["winter", "spring", "summer", "autumn"]);
+const PHOTOSHOOT_TIMES = new Set(["morning", "day", "evening", "night"]);
 const MAX_SETS = 10;
 const PHOTOS_PER_SET = 3;
 
@@ -37,6 +44,273 @@ function composeReviewPrompt(basePrompt: string, locationPrompt: string, item: s
   return [basePrompt.trim(), p.trim(), ...extras].filter(Boolean).join(" ").trim();
 }
 
+function parseModelPhotoUrls(raw: unknown): string[] {
+  if (!raw) return [];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((url): url is string => typeof url === "string")
+      .map((url) => url.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function assertAllowedImageUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("Некорректная ссылка на фото модели");
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error("Фото модели должно быть доступно по HTTPS");
+  }
+}
+
+async function downloadRemoteImage(url: string): Promise<GenImage> {
+  assertAllowedImageUrl(url);
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error("Не удалось загрузить фото выбранной модели");
+  }
+  const mime = response.headers.get("content-type")?.split(";")[0]?.trim() || "image/jpeg";
+  if (!ALLOWED_MIME.has(mime)) {
+    throw new Error(`Неподдерживаемый формат фото модели: ${mime}`);
+  }
+  const arrayBuffer = await response.arrayBuffer();
+  if (arrayBuffer.byteLength > MAX_BYTES) {
+    throw new Error("Фото модели больше 10 МБ");
+  }
+  return { buffer: Buffer.from(arrayBuffer), mime };
+}
+
+type PhotoshootApprovalMode = "manual" | "automatic";
+type RouteLog = { error: (o: object, m?: string) => void };
+
+const PHOTOSHOOT_SHOTS = [
+  [
+    "Wide full-body action frame from the front.",
+    "The model walks confidently toward the camera in mid-stride, one foot clearly ahead of the other.",
+    "Her arms swing naturally and the garment reacts realistically to movement.",
+    "Eye-level camera, enough space around the body, the whole product remains clearly visible.",
+  ].join(" "),
+  [
+    "Wide full-body side-profile action frame.",
+    "The model walks briskly from left to right across the frame with a long natural stride.",
+    "Show a true side silhouette, bent elbows and visible separation between both legs.",
+    "Track the moving model while keeping the product sharp and readable.",
+  ].join(" "),
+  [
+    "Full-body rear three-quarter frame.",
+    "The model walks away from the camera and turns her head back over one shoulder.",
+    "One heel is lifted in the middle of a step and the arms are in different natural positions.",
+    "Clearly show the complete back construction and fit of the product.",
+  ].join(" "),
+  [
+    "Dynamic full-body turning frame.",
+    "Capture the model halfway through a quick turn, with shoulders and hips rotating in different directions.",
+    "Hair and the lower part of the garment show subtle motion, while fabric details remain sharp.",
+    "Use a diagonal composition rather than a centered catalog stance.",
+  ].join(" "),
+  [
+    "Full-body lifestyle frame using the architecture of the selected location.",
+    "The model steps up onto a curb or low step, with one knee raised and weight on the other leg.",
+    "One hand lightly touches a nearby railing or wall while the other arm remains relaxed.",
+    "Use a slightly low camera angle and show the complete outfit.",
+  ].join(" "),
+  [
+    "Seated fashion frame in the selected location.",
+    "The model sits naturally on a bench, step or low architectural surface, leaning slightly forward.",
+    "Her legs are asymmetrical, one foot closer to camera, and her hands rest in different positions.",
+    "Use a three-quarter full-body composition that still shows the product shape.",
+  ].join(" "),
+  [
+    "Energetic low-angle full-body frame.",
+    "The model takes a wide diagonal step past the camera and looks to the side instead of directly forward.",
+    "Use a low camera position, strong perspective and visible arm movement.",
+    "Keep anatomy natural and do not crop hands or feet.",
+  ].join(" "),
+  [
+    "High-angle medium-full fashion frame.",
+    "The model pauses while shifting her weight strongly onto one hip, one knee bent and one shoulder lowered.",
+    "One hand adjusts the collar or hood while the other hand touches a pocket or garment seam.",
+    "The pose, hand placement and camera height must be visibly different from every previous shot.",
+  ].join(" "),
+  [
+    "Waist-up candid action frame from a three-quarter side angle.",
+    "The model is actively fastening, opening or adjusting the product with both hands while looking away.",
+    "Show believable hand interaction with the real fasteners and preserve their exact construction.",
+    "Use tighter framing and a different background position.",
+  ].join(" "),
+  [
+    "Close product-detail frame with part of the model visible.",
+    "One hand gently pulls or holds the fabric to reveal its exact texture, thickness and finish.",
+    "Focus on material, stitching and color accuracy; use shallow depth of field.",
+    "This must be a genuine close-up, not another standing portrait.",
+  ].join(" "),
+  [
+    "Spontaneous medium-full lifestyle frame.",
+    "The model is caught in a natural laughing or relaxed moment while moving diagonally through the location.",
+    "Her torso leans slightly, both arms are away from the neutral hanging position, and the legs are mid-step.",
+    "Compose the model off-center with visible environmental depth.",
+  ].join(" "),
+  [
+    "Final advertising hero frame with an assertive asymmetrical fashion pose.",
+    "Use a dramatic three-quarter camera angle, one leg extended forward and the other supporting the body.",
+    "Place the hands deliberately in two different positions and turn the face toward the light.",
+    "The result must feel distinct from a static front-facing catalog portrait.",
+  ].join(" "),
+];
+
+const PHOTOSHOOT_DIVERSITY_RULES = [
+  "The anchor image is an identity and product reference only, not a pose or composition template.",
+  "Create a genuinely new photograph: change body pose, hand placement, leg position, gaze direction, camera distance, camera height and the model's position in the environment.",
+  "Do not reproduce the anchor's static stance, centered composition, straight hanging arms or identical crop.",
+  "Prioritize visible body movement and asymmetry while keeping anatomy realistic.",
+  "Do not turn the requested action into a neutral standing portrait.",
+  "Keep the exact same woman and exact garment; never redesign, recolor or simplify the product.",
+];
+
+async function getPhotoshootApprovalSettings(): Promise<{ mode: PhotoshootApprovalMode; visionModel: string }> {
+  const rows = await db.select().from(appSettingsTable);
+  const map = new Map(rows.map((row) => [row.key, row.value] as const));
+  return {
+    mode: map.get("photoshoot:approval_mode") === "automatic" ? "automatic" : "manual",
+    visionModel: map.get("photoshoot:vision_model")?.trim() || DEFAULT_SUPPORT_MODEL,
+  };
+}
+
+function imageDataUrl(image: GenImage): string {
+  return `data:${image.mime};base64,${image.buffer.toString("base64")}`;
+}
+
+async function evaluateAnchorPhoto(
+  visionModel: string,
+  references: GenImage[],
+  anchor: GenImage,
+): Promise<{ accepted: boolean; feedback: string }> {
+  const client = await getOpenAI();
+  const content: Array<Record<string, unknown>> = [
+    {
+      type: "text",
+      text: [
+        "Evaluate the last image as an anchor frame for an ecommerce fashion photoshoot.",
+        "The first two images are identity references for the model.",
+        "The next five images are product references: front, side, back, texture and details.",
+        "Check facial identity, body consistency, exact product color, cut, texture and distinctive details, anatomy, and scene coherence.",
+        'Return strict JSON only: {"accepted":boolean,"feedback":"short actionable correction"}',
+      ].join(" "),
+    },
+    ...references.map((image) => ({ type: "image_url", image_url: { url: imageDataUrl(image) } })),
+    { type: "image_url", image_url: { url: imageDataUrl(anchor) } },
+  ];
+  const response = await client.chat.completions.create({
+    model: visionModel,
+    messages: [{ role: "user", content: content as never }],
+    response_format: { type: "json_object" },
+  });
+  const raw = response.choices[0]?.message?.content ?? "";
+  try {
+    const parsed = JSON.parse(raw) as { accepted?: unknown; feedback?: unknown };
+    return {
+      accepted: parsed.accepted === true,
+      feedback: typeof parsed.feedback === "string" ? parsed.feedback.slice(0, 1000) : "",
+    };
+  } catch {
+    return { accepted: false, feedback: "Preserve the exact model identity and reproduce the product more accurately." };
+  }
+}
+
+async function loadOrderSourceImages(sourcePhotos: string[]): Promise<GenImage[]> {
+  return Promise.all(sourcePhotos.map(async (url) => {
+    const object = await downloadStorageObject(url);
+    return { buffer: object.buffer, mime: object.contentType };
+  }));
+}
+
+async function generatePhotoshootSeries(
+  orderId: string,
+  basePrompt: string,
+  sourceImages: GenImage[],
+  anchor: GenImage,
+  log: RouteLog,
+): Promise<string[]> {
+  const model = await getCategoryModel("photoshoot");
+  const results = new Array<string>(PHOTOSHOOT_SHOTS.length);
+  let nextIndex = 0;
+  const worker = async (): Promise<void> => {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= PHOTOSHOOT_SHOTS.length) return;
+      const prompt = [
+        basePrompt,
+        "Use the anchor image to preserve the exact same woman, face, body, garment and visual continuity of the selected environment.",
+        ...PHOTOSHOOT_DIVERSITY_RULES,
+        PHOTOSHOOT_SHOTS[index],
+        `This is shot ${index + 1} of a coherent 12-photo series and it must have its own unmistakably different pose and composition.`,
+      ].join(" ");
+      const images = await generateImages({
+        model,
+        prompt,
+        inputs: [anchor, ...sourceImages.slice(2)],
+        log,
+      });
+      const image = images[0];
+      if (!image) throw new Error(`Не удалось создать кадр ${index + 1}`);
+      const url = await uploadBufferToStorage(image.buffer, image.mime, "generated");
+      results[index] = url;
+      await db
+        .update(ordersTable)
+        .set({ resultPhotos: results.filter(Boolean) })
+        .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "processing")));
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  return results;
+}
+
+function composePhotoshootPrompt(input: {
+  basePrompt: string;
+  type: string;
+  season: string;
+  timeOfDay: string;
+  atmosphere: string;
+  location: string;
+  productName: string;
+}): string {
+  const typePrompt = input.type === "studio"
+    ? "Professional studio photoshoot with controlled studio lighting and a clean studio setting."
+    : "Professional outdoor street photoshoot in a realistic environment with natural light.";
+  const seasonPrompt: Record<string, string> = {
+    winter: "The scene is set in winter with season-appropriate surroundings.",
+    spring: "The scene is set in spring with fresh greenery.",
+    summer: "The scene is set in summer with season-appropriate surroundings.",
+    autumn: "The scene is set in autumn with seasonal foliage.",
+  };
+  const timePrompt: Record<string, string> = {
+    morning: "Morning with soft fresh light.",
+    day: "Daytime with clear natural daylight.",
+    evening: "Evening with warm golden-hour or early evening light.",
+    night: "Night with realistic environmental lights and cinematic illumination.",
+  };
+  return [
+    input.basePrompt,
+    typePrompt,
+    seasonPrompt[input.season],
+    timePrompt[input.timeOfDay],
+    input.atmosphere ? `Weather and atmosphere: ${input.atmosphere}.` : "",
+    input.location ? `Location: ${input.location}.` : "",
+    `Product being photographed: ${input.productName}.`,
+    "The first two reference images show the selected model. The next five reference images show the product from the front, side, back, texture and detail views.",
+    "Preserve the exact facial identity, body proportions, product design, colors, material, texture and distinctive details accurately.",
+  ].filter(Boolean).join(" ");
+}
+
 // Pose directives appended on each chained step so every subsequent photo shows
 // a clearly different pose while keeping the same person, outfit and location.
 const POSE_VARIATIONS = [
@@ -46,14 +320,14 @@ const POSE_VARIATIONS = [
 ];
 
 /**
- * Atomically append one url to an order's resultPhotos jsonb array (safe under
+ * Atomically append one url to an order's resultPhotos JSON array (safe under
  * concurrency). Guarded on status='processing' so a late chain result can never
  * be written to an order the timeout safety net already failed/refunded.
  */
 async function appendResultPhoto(orderId: string, url: string): Promise<void> {
   await db
     .update(ordersTable)
-    .set({ resultPhotos: sql`${ordersTable.resultPhotos} || ${JSON.stringify([url])}::jsonb` })
+    .set({ resultPhotos: sql`json_array_append(coalesce(${ordersTable.resultPhotos}, json_array()), '$', ${url})` })
     .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "processing")));
 }
 
@@ -116,26 +390,23 @@ router.post("/generate", requireAuth, upload.array("photos", 3), async (req, res
         balance: sql`${usersTable.balance} - ${price.toFixed(2)}`,
         totalSpent: sql`${usersTable.totalSpent} + ${price.toFixed(2)}`,
       })
-      .where(and(eq(usersTable.id, userId), sql`${usersTable.balance} >= ${price.toFixed(2)}`))
-      .returning({ id: usersTable.id });
-    if (debited.length === 0) {
+      .where(and(eq(usersTable.id, userId), sql`${usersTable.balance} >= ${price.toFixed(2)}`));
+    if (affectedRows(debited) === 0) {
       res.status(402).json({ error: "Недостаточно средств на балансе" });
       return;
     }
 
-    const [pendingOrder] = await db
+    const orderId = randomUUID();
+    await db
       .insert(ordersTable)
-      .values({ userId, styleId, status: "processing", amount: price.toFixed(2), sourcePhotos: [] })
-      .returning();
-    const orderId = pendingOrder!.id;
+      .values({ id: orderId, userId, styleId, status: "processing", amount: price.toFixed(2), sourcePhotos: [] });
 
     async function refundAndFail(message: string): Promise<void> {
       const transitioned = await db
         .update(ordersTable)
         .set({ status: "failed", errorMessage: message, completedAt: new Date() })
-        .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "processing")))
-        .returning({ id: ordersTable.id });
-      if (transitioned.length > 0) {
+        .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "processing")));
+      if (affectedRows(transitioned) > 0) {
         await db.update(usersTable).set({
           balance: sql`${usersTable.balance} + ${price.toFixed(2)}`,
           totalSpent: sql`greatest(${usersTable.totalSpent} - ${price.toFixed(2)}, 0)`,
@@ -173,9 +444,8 @@ router.post("/generate", requireAuth, upload.array("photos", 3), async (req, res
             status: "success",
             completedAt: new Date(),
           })
-          .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "processing")))
-          .returning({ id: ordersTable.id });
-        if (ok.length > 0) {
+          .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "processing")));
+        if (affectedRows(ok) > 0) {
           await db
             .update(stylesTable)
             .set({ ordersCount: sql`${stylesTable.ordersCount} + 1` })
@@ -210,7 +480,42 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
     }
 
     const files = (req.files as Express.Multer.File[] | undefined) ?? [];
-    if (files.length < service.photosMin || files.length > service.photosMax) {
+    const modelPhotoUrls = serviceKey === "wb-photoshoot" ? parseModelPhotoUrls(req.body?.modelPhotoUrls) : [];
+    const photoshootType = serviceKey === "wb-photoshoot" ? String(req.body?.photoshootType ?? "") : "";
+    const photoshootSeason = serviceKey === "wb-photoshoot" ? String(req.body?.photoshootSeason ?? "") : "";
+    const photoshootTimeOfDay = serviceKey === "wb-photoshoot" ? String(req.body?.photoshootTimeOfDay ?? "") : "";
+    const photoshootAtmosphere = serviceKey === "wb-photoshoot" ? String(req.body?.photoshootAtmosphere ?? "").trim() : "";
+    const photoshootLocation = serviceKey === "wb-photoshoot" ? String(req.body?.photoshootLocation ?? "").trim() : "";
+    const productName = serviceKey === "wb-photoshoot" ? String(req.body?.productName ?? "").trim() : "";
+    if (serviceKey === "wb-photoshoot" && !PHOTOSHOOT_TYPES.has(photoshootType)) {
+      res.status(400).json({ error: "Выберите тип фотосессии" });
+      return;
+    }
+    if (serviceKey === "wb-photoshoot" && photoshootType === "street" && !PHOTOSHOOT_SEASONS.has(photoshootSeason)) {
+      res.status(400).json({ error: "Выберите время года" });
+      return;
+    }
+    if (serviceKey === "wb-photoshoot" && photoshootType === "street" && !PHOTOSHOOT_TIMES.has(photoshootTimeOfDay)) {
+      res.status(400).json({ error: "Выберите время дня" });
+      return;
+    }
+    if (serviceKey === "wb-photoshoot" && photoshootType === "street" && (!photoshootAtmosphere || photoshootAtmosphere.length > 200)) {
+      res.status(400).json({ error: "Выберите атмосферу" });
+      return;
+    }
+    if (serviceKey === "wb-photoshoot" && photoshootType === "street" && (!photoshootLocation || photoshootLocation.length > 150)) {
+      res.status(400).json({ error: "Выберите локацию" });
+      return;
+    }
+    if (serviceKey === "wb-photoshoot" && modelPhotoUrls.length !== 2) {
+      res.status(400).json({ error: "У выбранной модели должно быть 2 фото" });
+      return;
+    }
+    if (serviceKey === "wb-photoshoot" && files.length !== 5) {
+      res.status(400).json({ error: "Нужно загрузить 5 фотографий товара" });
+      return;
+    }
+    if (serviceKey !== "wb-photoshoot" && (files.length < service.photosMin || files.length > service.photosMax)) {
       res.status(400).json({
         error: service.photosMin === service.photosMax
           ? `Нужно загрузить ${service.photosMin} фото`
@@ -218,9 +523,22 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
       });
       return;
     }
+    if (serviceKey === "wb-photoshoot" && (!productName || productName.length > 255)) {
+      res.status(400).json({ error: "Укажите название товара" });
+      return;
+    }
     for (const f of files) {
       if (!ALLOWED_MIME.has(f.mimetype)) {
         res.status(400).json({ error: `Неподдерживаемый формат: ${f.mimetype}` });
+        return;
+      }
+    }
+    let modelInputs: GenImage[] | null = null;
+    if (modelPhotoUrls.length > 0) {
+      try {
+        modelInputs = await Promise.all(modelPhotoUrls.map((url) => downloadRemoteImage(url)));
+      } catch (err) {
+        res.status(400).json({ error: err instanceof Error ? err.message : "Не удалось загрузить фото модели" });
         return;
       }
     }
@@ -293,39 +611,58 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
         balance: sql`${usersTable.balance} - ${price.toFixed(2)}`,
         totalSpent: sql`${usersTable.totalSpent} + ${price.toFixed(2)}`,
       })
-      .where(and(eq(usersTable.id, userId), sql`${usersTable.balance} >= ${price.toFixed(2)}`))
-      .returning({ id: usersTable.id });
-    if (debited.length === 0) {
+      .where(and(eq(usersTable.id, userId), sql`${usersTable.balance} >= ${price.toFixed(2)}`));
+    if (affectedRows(debited) === 0) {
       res.status(402).json({ error: "Недостаточно средств на балансе" });
       return;
     }
 
     const isReview = serviceKey === "review";
-    const expectedPhotos = isReview ? reviewSets * PHOTOS_PER_SET : 0;
+    const isPhotoshoot = serviceKey === "wb-photoshoot";
+    const approvalSettings = isPhotoshoot ? await getPhotoshootApprovalSettings() : null;
+    const photoshootPrompt = isPhotoshoot
+      ? composePhotoshootPrompt({
+          basePrompt: service.prompt,
+          type: photoshootType,
+          season: photoshootSeason,
+          timeOfDay: photoshootTimeOfDay,
+          atmosphere: photoshootAtmosphere,
+          location: photoshootLocation,
+          productName,
+        })
+      : null;
+    const expectedPhotos = isReview ? reviewSets * PHOTOS_PER_SET : isPhotoshoot ? PHOTOSHOOT_SHOTS.length : 0;
 
-    const [pendingOrder] = await db
+    const orderId = randomUUID();
+    await db
       .insert(ordersTable)
       .values({
+        id: orderId,
         userId,
         serviceKey: service.key,
         locationId: resolvedLocationId,
         status: "processing",
         amount: price.toFixed(2),
         sourcePhotos: [],
-        ...(isReview
-          ? { item: reviewItem, gender: reviewGender, age: reviewAge, sets: reviewSets, expectedPhotos }
+        expectedPhotos,
+        ...(isPhotoshoot
+          ? {
+              approvalMode: approvalSettings!.mode,
+              photoshootPrompt,
+              item: productName,
+            }
           : {}),
-      })
-      .returning();
-    const orderId = pendingOrder!.id;
+        ...(isReview
+          ? { item: reviewItem, gender: reviewGender, age: reviewAge, sets: reviewSets }
+          : {}),
+      });
 
     async function refundAndFail(message: string): Promise<void> {
       const transitioned = await db
         .update(ordersTable)
         .set({ status: "failed", errorMessage: message, completedAt: new Date() })
-        .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "processing")))
-        .returning({ id: ordersTable.id });
-      if (transitioned.length > 0) {
+        .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "processing")));
+      if (affectedRows(transitioned) > 0) {
         await db.update(usersTable).set({
           balance: sql`${usersTable.balance} + ${price.toFixed(2)}`,
           totalSpent: sql`greatest(${usersTable.totalSpent} - ${price.toFixed(2)}, 0)`,
@@ -418,13 +755,77 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
       return;
     }
 
-    // ===== Non-review services: background generation via configured model =====
-    const serviceInputs: GenImage[] = files.map((f) => ({ buffer: f.buffer, mime: f.mimetype }));
+    const productInputs: GenImage[] = files.map((f) => ({ buffer: f.buffer, mime: f.mimetype }));
+    const serviceInputs: GenImage[] = [...(modelInputs ?? []), ...productInputs];
+
+    res.status(201).json({ orderId, status: "processing" });
+
+    if (isPhotoshoot) {
+      void (async () => {
+        try {
+          const model = await getCategoryModel("photoshoot");
+          const sourceUrls = await Promise.all(
+            serviceInputs.map((image) => uploadBufferToStorage(image.buffer, image.mime, "source")),
+          );
+          await db
+            .update(ordersTable)
+            .set({ sourcePhotoUrl: sourceUrls[0] ?? null, sourcePhotos: sourceUrls })
+            .where(eq(ordersTable.id, orderId));
+
+          let correction = "";
+          let anchor: GenImage | null = null;
+          for (let attempt = 0; attempt < (approvalSettings!.mode === "automatic" ? 3 : 1); attempt++) {
+            const anchorPrompt = [
+              photoshootPrompt!,
+              "Create one strong anchor frame: full-body front three-quarter fashion pose.",
+              "The product must be worn correctly and match all five product references exactly.",
+              "This anchor will define identity, clothing and environment for the whole series.",
+              correction,
+            ].filter(Boolean).join(" ");
+            const generated = await generateImages({ model, prompt: anchorPrompt, inputs: serviceInputs, log: req.log });
+            anchor = generated[0] ?? null;
+            if (!anchor) continue;
+            if (approvalSettings!.mode === "manual") break;
+            const evaluation = await evaluateAnchorPhoto(approvalSettings!.visionModel, serviceInputs, anchor);
+            if (evaluation.accepted) break;
+            correction = `Correct the following problems from the previous attempt: ${evaluation.feedback}`;
+          }
+          if (!anchor) {
+            await refundAndFail("Не удалось создать опорный кадр");
+            return;
+          }
+
+          const anchorUrl = await uploadBufferToStorage(anchor.buffer, anchor.mime, "generated");
+          await db
+            .update(ordersTable)
+            .set({ anchorPhotoUrl: anchorUrl, resultPhotos: [], approvalComment: null })
+            .where(eq(ordersTable.id, orderId));
+
+          if (approvalSettings!.mode === "manual") {
+            await db
+              .update(ordersTable)
+              .set({ status: "awaiting_approval" })
+              .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "processing")));
+            return;
+          }
+
+          const urls = await generatePhotoshootSeries(orderId, photoshootPrompt!, serviceInputs, anchor, req.log);
+          await db
+            .update(ordersTable)
+            .set({ resultPhotos: urls, status: "success", completedAt: new Date() })
+            .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "processing")));
+        } catch (err) {
+          req.log.error({ err, orderId }, "photoshoot generation failed; refunding");
+          await refundAndFail(err instanceof Error ? err.message : "Не удалось создать фотосессию");
+        }
+      })();
+      return;
+    }
+
+    // ===== Other non-review services: background generation =====
     const finalPrompt = locationFragment
       ? `${service.prompt} Setting: ${locationFragment}.`
       : service.prompt;
-
-    res.status(201).json({ orderId, status: "processing" });
 
     void (async () => {
       try {
@@ -464,6 +865,117 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
 // Auto-fail tasks that have been processing too long.
 const STUCK_TASK_MS = 30 * 60 * 1000;
 
+const RevisionBody = z.object({
+  comment: z.string().trim().min(3).max(1000),
+});
+
+router.post("/generate/:orderId/photoshoot/approve", requireAuth, async (req, res) => {
+  const orderId = String(req.params.orderId ?? "");
+  if (!UUID_RE.test(orderId)) { res.status(400).json({ error: "Invalid orderId" }); return; }
+  const [order] = await db.select().from(ordersTable).where(eq(ordersTable.id, orderId)).limit(1);
+  if (!order || order.userId !== req.auth!.userId || order.serviceKey !== "wb-photoshoot") {
+    res.status(404).json({ error: "Order not found" });
+    return;
+  }
+  if (order.status !== "awaiting_approval" || !order.anchorPhotoUrl || !order.photoshootPrompt) {
+    res.status(409).json({ error: "Опорный кадр сейчас нельзя подтвердить" });
+    return;
+  }
+  const transitioned = await db
+    .update(ordersTable)
+    .set({ status: "processing", errorMessage: null })
+    .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "awaiting_approval")));
+  if (affectedRows(transitioned) === 0) { res.status(409).json({ error: "Заказ уже обрабатывается" }); return; }
+  res.json({ orderId, status: "processing" });
+
+  void (async () => {
+    try {
+      const sourceImages = await loadOrderSourceImages(order.sourcePhotos);
+      const anchorObject = await downloadStorageObject(order.anchorPhotoUrl!);
+      const anchor = { buffer: anchorObject.buffer, mime: anchorObject.contentType };
+      const urls = await generatePhotoshootSeries(orderId, order.photoshootPrompt!, sourceImages, anchor, req.log);
+      await db
+        .update(ordersTable)
+        .set({ resultPhotos: urls, status: "success", completedAt: new Date() })
+        .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "processing")));
+    } catch (err) {
+      req.log.error({ err, orderId }, "approved photoshoot series failed");
+      const failed = await db
+        .update(ordersTable)
+        .set({ status: "failed", errorMessage: "Не удалось создать серию фотографий", completedAt: new Date() })
+        .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "processing")));
+      if (affectedRows(failed) > 0 && order.userId) {
+        await db
+          .update(usersTable)
+          .set({
+            balance: sql`${usersTable.balance} + ${order.amount}`,
+            totalSpent: sql`greatest(${usersTable.totalSpent} - ${order.amount}, 0)`,
+          })
+          .where(eq(usersTable.id, order.userId));
+      }
+    }
+  })();
+});
+
+router.post("/generate/:orderId/photoshoot/revise", requireAuth, async (req, res) => {
+  const orderId = String(req.params.orderId ?? "");
+  const parsed = RevisionBody.safeParse(req.body);
+  if (!UUID_RE.test(orderId) || !parsed.success) {
+    res.status(400).json({ error: "Добавьте комментарий от 3 до 1000 символов" });
+    return;
+  }
+  const [order] = await db.select().from(ordersTable).where(eq(ordersTable.id, orderId)).limit(1);
+  if (!order || order.userId !== req.auth!.userId || order.serviceKey !== "wb-photoshoot") {
+    res.status(404).json({ error: "Order not found" });
+    return;
+  }
+  if (order.status !== "awaiting_approval" || !order.photoshootPrompt) {
+    res.status(409).json({ error: "Опорный кадр сейчас нельзя изменить" });
+    return;
+  }
+  if (order.revisionCount >= 3) {
+    res.status(409).json({ error: "Доступно не более трёх правок опорного кадра" });
+    return;
+  }
+  const transitioned = await db
+    .update(ordersTable)
+    .set({
+      status: "processing",
+      approvalComment: parsed.data.comment,
+      revisionCount: order.revisionCount + 1,
+      errorMessage: null,
+    })
+    .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "awaiting_approval")));
+  if (affectedRows(transitioned) === 0) { res.status(409).json({ error: "Заказ уже обрабатывается" }); return; }
+  res.json({ orderId, status: "processing" });
+
+  void (async () => {
+    try {
+      const sourceImages = await loadOrderSourceImages(order.sourcePhotos);
+      const model = await getCategoryModel("photoshoot");
+      const prompt = [
+        order.photoshootPrompt!,
+        "Regenerate the anchor frame while preserving the exact same woman and exact product.",
+        `User correction: ${parsed.data.comment}`,
+      ].join(" ");
+      const images = await generateImages({ model, prompt, inputs: sourceImages, log: req.log });
+      const anchor = images[0];
+      if (!anchor) throw new Error("No anchor image");
+      const anchorUrl = await uploadBufferToStorage(anchor.buffer, anchor.mime, "generated");
+      await db
+        .update(ordersTable)
+        .set({ anchorPhotoUrl: anchorUrl, status: "awaiting_approval", errorMessage: null })
+        .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "processing")));
+    } catch (err) {
+      req.log.error({ err, orderId }, "photoshoot anchor revision failed");
+      await db
+        .update(ordersTable)
+        .set({ status: "awaiting_approval", errorMessage: "Не удалось применить правки. Попробуйте изменить комментарий." })
+        .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "processing")));
+    }
+  })();
+});
+
 router.get("/generate/:orderId/status", requireAuth, async (req, res) => {
   const orderId = String(req.params.orderId ?? "");
   if (!UUID_RE.test(orderId)) {
@@ -485,14 +997,24 @@ router.get("/generate/:orderId/status", requireAuth, async (req, res) => {
     });
     return;
   }
+  if (order.status === "awaiting_approval") {
+    res.json({
+      orderId: order.id,
+      status: order.status,
+      anchorPhotoUrl: order.anchorPhotoUrl,
+      approvalMode: order.approvalMode,
+      revisionCount: order.revisionCount,
+      errorMessage: order.errorMessage,
+    });
+    return;
+  }
 
   async function failAndRefund(message: string): Promise<boolean> {
     const transitioned = await db
       .update(ordersTable)
       .set({ status: "failed", errorMessage: message, completedAt: new Date() })
-      .where(and(eq(ordersTable.id, order!.id), eq(ordersTable.status, "processing")))
-      .returning({ id: ordersTable.id });
-    if (transitioned.length === 0) return false;
+      .where(and(eq(ordersTable.id, order!.id), eq(ordersTable.status, "processing")));
+    if (affectedRows(transitioned) === 0) return false;
     if (order!.userId) {
       await db
         .update(usersTable)
@@ -510,7 +1032,11 @@ router.get("/generate/:orderId/status", requireAuth, async (req, res) => {
   // net in case the worker died (e.g. a server restart mid-generation).
   const aged = Date.now() - order.createdAt.getTime() > STUCK_TASK_MS;
   if (aged && order.status === "processing") {
-    if ((order.resultPhotos?.length ?? 0) > 0) {
+    const resultCount = order.resultPhotos?.length ?? 0;
+    const hasCompleteResult = order.serviceKey === "wb-photoshoot"
+      ? resultCount === PHOTOSHOOT_SHOTS.length
+      : resultCount > 0;
+    if (hasCompleteResult) {
       await db
         .update(ordersTable)
         .set({ status: "success", completedAt: new Date() })
@@ -518,12 +1044,21 @@ router.get("/generate/:orderId/status", requireAuth, async (req, res) => {
       res.json({ orderId: order.id, status: "success", resultPhotos: order.resultPhotos ?? [] });
       return;
     }
-    await failAndRefund("Превышено время ожидания генерации");
-    res.json({ orderId: order.id, status: "failed", errorMessage: "Превышено время ожидания генерации", refunded: true });
+    const timeoutMessage = order.serviceKey === "wb-photoshoot" && resultCount > 0
+      ? `Фотосессия создана не полностью: ${resultCount} из ${PHOTOSHOOT_SHOTS.length} кадров`
+      : "Превышено время ожидания генерации";
+    await failAndRefund(timeoutMessage);
+    res.json({ orderId: order.id, status: "failed", errorMessage: timeoutMessage, refunded: true });
     return;
   }
 
-  res.json({ orderId: order.id, status: order.status, resultPhotos: order.resultPhotos ?? [] });
+  res.json({
+    orderId: order.id,
+    status: order.status,
+    resultPhotos: order.resultPhotos ?? [],
+    anchorPhotoUrl: order.anchorPhotoUrl,
+    revisionCount: order.revisionCount,
+  });
 });
 
 export default router;

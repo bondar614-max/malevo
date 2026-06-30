@@ -1,32 +1,38 @@
-import { pgTable, uuid, varchar, text, timestamp, jsonb, numeric, integer } from "drizzle-orm/pg-core";
+import { mysqlTable, varchar, text, json, decimal, int } from "drizzle-orm/mysql-core";
+import { dateTimeColumn, uuidColumn } from "./_helpers";
 import { usersTable } from "./users";
 import { stylesTable } from "./styles";
 import { servicesTable, locationsTable } from "./services";
 
-export const ordersTable = pgTable("orders", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  userId: uuid("user_id").references(() => usersTable.id),
-  styleId: uuid("style_id").references(() => stylesTable.id),
+export const ordersTable = mysqlTable("orders", {
+  id: uuidColumn("id").primaryKey(),
+  userId: varchar("user_id", { length: 36 }).references(() => usersTable.id),
+  styleId: varchar("style_id", { length: 36 }).references(() => stylesTable.id),
   serviceKey: varchar("service_key", { length: 64 }).references(() => servicesTable.key),
-  locationId: uuid("location_id").references(() => locationsTable.id),
+  locationId: varchar("location_id", { length: 36 }).references(() => locationsTable.id),
   status: varchar("status", { length: 50 }).notNull().default("pending"),
-  amount: numeric("amount", { precision: 10, scale: 2 }).notNull().default("0"),
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull().default("0"),
   sourcePhotoUrl: varchar("source_photo_url", { length: 500 }),
-  sourcePhotos: jsonb("source_photos").$type<string[]>().notNull().default([]),
-  resultPhotos: jsonb("result_photos").$type<string[]>().notNull().default([]),
+  sourcePhotos: json("source_photos").$type<string[]>().notNull().default([]),
+  resultPhotos: json("result_photos").$type<string[]>().notNull().default([]),
   kieTaskId: varchar("kie_task_id", { length: 255 }),
-  kieTaskIds: jsonb("kie_task_ids").$type<string[]>().notNull().default([]),
+  kieTaskIds: json("kie_task_ids").$type<string[]>().notNull().default([]),
   paymentId: varchar("payment_id", { length: 255 }),
   errorMessage: text("error_message"),
   // Review (n8n) order inputs and progress tracking
   item: varchar("item", { length: 255 }),
   gender: varchar("gender", { length: 32 }),
   age: varchar("age", { length: 32 }),
-  sets: integer("sets"),
-  expectedPhotos: integer("expected_photos").notNull().default(0),
-  receivedPhotoNumbers: jsonb("received_photo_numbers").$type<number[]>().notNull().default([]),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  completedAt: timestamp("completed_at", { withTimezone: true }),
+  sets: int("sets"),
+  expectedPhotos: int("expected_photos").notNull().default(0),
+  receivedPhotoNumbers: json("received_photo_numbers").$type<number[]>().notNull().default([]),
+  approvalMode: varchar("approval_mode", { length: 32 }),
+  anchorPhotoUrl: varchar("anchor_photo_url", { length: 500 }),
+  approvalComment: text("approval_comment"),
+  revisionCount: int("revision_count").notNull().default(0),
+  photoshootPrompt: text("photoshoot_prompt"),
+  createdAt: dateTimeColumn("created_at").notNull().defaultNow(),
+  completedAt: dateTimeColumn("completed_at"),
 });
 
 export type Order = typeof ordersTable.$inferSelect;

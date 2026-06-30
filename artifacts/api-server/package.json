@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@google-cloud/storage": "^7.19.0",
+    "@napi-rs/canvas": "^1.0.0",
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",
     "bcryptjs": "^3.0.3",
@@ -21,8 +22,11 @@
     "express": "^5",
     "google-auth-library": "^10.6.2",
     "jsonwebtoken": "^9.0.3",
+    "mammoth": "^1.12.0",
     "multer": "^2.1.1",
+    "mysql2": "^3.22.5",
     "openai": "^6.39.1",
+    "pdf-parse": "^2.4.5",
     "pino": "^9",
     "pino-http": "^10",
     "zod": "catalog:"

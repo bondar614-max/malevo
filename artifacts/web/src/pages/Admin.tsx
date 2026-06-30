@@ -5,9 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { apiFetch, clearAuth, getStoredUser, getToken } from "@/lib/admin-api";
-import { LogOut, Users, ImageIcon, Tag, Layers, Pencil, Trash2, Plus, X, Shield, Upload, Loader2, Sparkles, MapPin, Cpu, Search, Check } from "lucide-react";
+import { LogOut, Users, ImageIcon, Tag, Layers, Pencil, Trash2, Plus, X, Shield, Upload, Loader2, Sparkles, MapPin, Cpu, Search, Check, LifeBuoy, Reply } from "lucide-react";
 
-type Tab = "users" | "orders" | "tariffs" | "styles" | "services" | "locations" | "ai";
+type Tab = "users" | "orders" | "support" | "tariffs" | "styles" | "services" | "locations" | "ai";
 
 interface UserRow {
   id: string; email: string; name: string; role: string; isBlocked: boolean;
@@ -18,6 +18,16 @@ interface OrderRow {
   styleId: string | null; styleTitle: string | null;
   serviceKey: string | null; serviceTitle: string | null; locationName: string | null;
   status: string; amount: number; createdAt: string; completedAt: string | null;
+}
+interface SupportMessage {
+  role: "user" | "assistant" | "admin";
+  content: string;
+  createdAt: string;
+}
+interface SupportTicketRow {
+  id: string; userId: string; userEmail: string | null; userName: string | null;
+  status: string; topic: string; summary: string; messages: SupportMessage[];
+  isUnread: boolean; createdAt: string; updatedAt: string;
 }
 interface ServiceRow {
   key: string; title: string; shortDescription: string; fullDescription: string;
@@ -65,6 +75,7 @@ export default function Admin() {
   const tabs: Array<{ id: Tab; label: string; icon: typeof Users }> = [
     { id: "users", label: "Пользователи", icon: Users },
     { id: "orders", label: "Генерации", icon: ImageIcon },
+    { id: "support", label: "Поддержка", icon: LifeBuoy },
     { id: "tariffs", label: "Тарифы", icon: Tag },
     { id: "styles", label: "Стили", icon: Layers },
     { id: "services", label: "Услуги", icon: Sparkles },
@@ -83,7 +94,7 @@ export default function Admin() {
             </div>
             <div>
               <div className="font-bold text-white">Админ</div>
-              <div className="text-xs text-muted-foreground">PhotoGen AI</div>
+              <div className="text-xs text-muted-foreground">MALEVO</div>
             </div>
           </div>
         </div>
@@ -114,6 +125,7 @@ export default function Admin() {
         <div className="p-8">
           {tab === "users" && <UsersTab />}
           {tab === "orders" && <OrdersTab />}
+          {tab === "support" && <SupportTab />}
           {tab === "tariffs" && <TariffsTab />}
           {tab === "styles" && <StylesTab />}
           {tab === "services" && <ServicesTab />}
@@ -285,6 +297,169 @@ function OrdersTab() {
         </table>
       </div>
     </div>
+  );
+}
+
+// ===== Support Tab =====
+function SupportTab() {
+  const [rows, setRows] = useState<SupportTicketRow[] | null>(null);
+  const [selected, setSelected] = useState<SupportTicketRow | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setRows(await apiFetch<SupportTicketRow[]>("/admin/support"));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setRows([]);
+    }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function markClosed(id: string) {
+    await apiFetch(`/admin/support/${id}`, { method: "PATCH", body: JSON.stringify({ status: "closed" }) });
+    await load();
+  }
+
+  const unread = rows?.filter((r) => r.isUnread).length ?? 0;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-3xl font-bold text-white">Поддержка</h2>
+          <p className="text-sm text-muted-foreground mt-1">Обращения, собранные ИИ-ассистентом у пользователей</p>
+        </div>
+        <div className={`rounded-full px-4 py-2 text-sm font-bold ${unread > 0 ? "bg-[#F43F5E]/20 text-[#FDA4AF] border border-[#F43F5E]/40 animate-pulse" : "bg-secondary text-muted-foreground border border-border"}`}>
+          Непрочитано: {unread}
+        </div>
+      </div>
+      {error && <div className="text-red-400 mb-4">{error}</div>}
+      <div className="bg-card border border-border rounded-2xl overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-secondary text-muted-foreground">
+            <tr>
+              <th className="px-4 py-3 text-left">Статус</th>
+              <th className="px-4 py-3 text-left">Пользователь</th>
+              <th className="px-4 py-3 text-left">Тема</th>
+              <th className="px-4 py-3 text-left">Дата обращения</th>
+              <th className="px-4 py-3 text-left">Обновлено</th>
+              <th className="px-4 py-3"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows?.map((ticket) => (
+              <tr key={ticket.id} className={`border-t border-border hover:bg-white/5 ${ticket.isUnread ? "bg-[#F43F5E]/5" : ""}`}>
+                <td className="px-4 py-3">
+                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${ticket.isUnread ? "bg-[#F43F5E]/20 text-[#FDA4AF]" : "bg-secondary text-muted-foreground"}`}>
+                    {ticket.status === "open" ? "Новое" : ticket.status === "answered" ? "Отвечено" : "Закрыто"}
+                  </span>
+                </td>
+                <td className="px-4 py-3">
+                  <div className="text-white">{ticket.userName || "Без имени"}</div>
+                  <div className="text-xs text-muted-foreground">{ticket.userEmail ?? "—"}</div>
+                </td>
+                <td className="px-4 py-3">
+                  <div className="max-w-md truncate text-white">{ticket.topic}</div>
+                  <div className="max-w-md truncate text-xs text-muted-foreground">{ticket.summary || "—"}</div>
+                </td>
+                <td className="px-4 py-3 text-muted-foreground">{formatDate(ticket.createdAt)}</td>
+                <td className="px-4 py-3 text-muted-foreground">{formatDate(ticket.updatedAt)}</td>
+                <td className="px-4 py-3 text-right whitespace-nowrap">
+                  <Button size="sm" variant="ghost" onClick={() => setSelected(ticket)} className="text-white">
+                    <Reply size={15} className="mr-2" /> Открыть
+                  </Button>
+                  {ticket.status !== "closed" && (
+                    <button onClick={() => markClosed(ticket.id)} className="ml-2 text-muted-foreground hover:text-red-400" title="Закрыть">
+                      <X size={16} />
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {rows && rows.length === 0 && (
+              <tr><td colSpan={6} className="px-4 py-12 text-center text-muted-foreground">Пока нет обращений</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {selected && <SupportTicketModal ticket={selected} onClose={() => setSelected(null)} onSaved={() => { setSelected(null); load(); }} />}
+    </div>
+  );
+}
+
+function SupportTicketModal({ ticket, onClose, onSaved }: { ticket: SupportTicketRow; onClose: () => void; onSaved: () => void }) {
+  const [reply, setReply] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      const body = reply.trim() ? { adminReply: reply.trim() } : { markRead: true };
+      await apiFetch(`/admin/support/${ticket.id}`, { method: "PATCH", body: JSON.stringify(body) });
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal title={`Обращение: ${ticket.topic}`} onClose={onClose} wide>
+      <div className="space-y-5">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+          <div className="rounded-xl bg-secondary border border-border p-3">
+            <div className="text-xs text-muted-foreground">Пользователь</div>
+            <div className="text-white font-medium truncate">{ticket.userName || "Без имени"}</div>
+            <div className="text-xs text-muted-foreground truncate">{ticket.userEmail ?? "—"}</div>
+          </div>
+          <div className="rounded-xl bg-secondary border border-border p-3">
+            <div className="text-xs text-muted-foreground">Дата обращения</div>
+            <div className="text-white font-medium">{formatDate(ticket.createdAt)}</div>
+          </div>
+          <div className="rounded-xl bg-secondary border border-border p-3">
+            <div className="text-xs text-muted-foreground">Статус</div>
+            <div className="text-white font-medium">{ticket.status}</div>
+          </div>
+        </div>
+
+        <div>
+          <div className="mb-2 text-sm font-semibold text-white">Переписка</div>
+          <div className="max-h-80 space-y-3 overflow-auto rounded-xl border border-border bg-background/40 p-4">
+            {ticket.messages.map((m, i) => (
+              <div key={`${m.createdAt}-${i}`} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                <div className={`max-w-[82%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+                  m.role === "user"
+                    ? "bg-[#7C3AED] text-white"
+                    : m.role === "admin"
+                      ? "bg-[#16A34A]/20 text-green-100 border border-[#22C55E]/30"
+                      : "bg-secondary text-white border border-border"
+                }`}>
+                  <div className="mb-1 text-[10px] uppercase tracking-wide opacity-60">
+                    {m.role === "user" ? "Пользователь" : m.role === "admin" ? "Администратор" : "ИИ"}
+                  </div>
+                  {m.content}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <Field label="Ответ администратора">
+          <Textarea value={reply} onChange={(e) => setReply(e.target.value)} rows={4} className="bg-secondary border-border text-white" placeholder="Напишите ответ пользователю..." />
+        </Field>
+        {error && <div className="text-sm text-red-400">{error}</div>}
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>Закрыть</Button>
+          <Button onClick={save} disabled={saving} className="bg-gradient-primary text-white border-0">
+            {saving ? "Сохранение..." : reply.trim() ? "Ответить" : "Отметить прочитанным"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -1168,10 +1343,24 @@ function LocationEditor({ initial, onClose, onSaved }: { initial: LocationRow; o
 
 // ===== AI Models Tab =====
 type GenProvider = "kie" | "openrouter";
+type AiModelCategory = "styles" | "photoshoot" | "review";
 interface ModelOption { id: string; name: string; provider: GenProvider; }
-interface AiSettings { styles: string; photoshoot: string; review: string; }
+interface AiSettings {
+  styles: string;
+  photoshoot: string;
+  review: string;
+  supportModel: string;
+  supportInstructions: string;
+  supportInstructionFileName: string;
+  photoshootApprovalMode: "manual" | "automatic";
+  photoshootVisionModel: string;
+}
+interface AiKeyStatus {
+  openrouter: { configured: boolean; source: "database" | "env" | "none" };
+  kie: { configured: boolean; source: "database" | "env" | "none" };
+}
 
-const AI_CATEGORIES: Array<{ key: keyof AiSettings; label: string; desc: string }> = [
+const AI_CATEGORIES: Array<{ key: AiModelCategory; label: string; desc: string }> = [
   { key: "styles", label: "Стили", desc: "Модель для генерации стилей" },
   { key: "photoshoot", label: "Фотосессия", desc: "Модель для услуги фотосессии (WB)" },
   { key: "review", label: "Фото для отзывов", desc: "Модель для генерации фото-отзывов" },
@@ -1188,38 +1377,56 @@ function providerOf(modelId: string): GenProvider {
 
 function AiModelsTab() {
   const [models, setModels] = useState<ModelOption[]>([]);
+  const [textModels, setTextModels] = useState<ModelOption[]>([]);
   const [settings, setSettings] = useState<AiSettings | null>(null);
+  const [keyStatus, setKeyStatus] = useState<AiKeyStatus | null>(null);
+  const [openrouterKey, setOpenrouterKey] = useState("");
+  const [kieKey, setKieKey] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploadingInstruction, setUploadingInstruction] = useState(false);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState(false);
-  const [providerByCat, setProviderByCat] = useState<Record<keyof AiSettings, GenProvider>>({
+  const [providerByCat, setProviderByCat] = useState<Record<AiModelCategory, GenProvider>>({
     styles: "kie",
     photoshoot: "kie",
     review: "kie",
   });
 
-  useEffect(() => {
-    (async () => {
+  const loadAiConfig = useCallback(async () => {
       try {
-        const [m, s] = await Promise.all([
+        const [imageModels, supportTextModels, settingsData, keyData] = await Promise.all([
           apiFetch<ModelOption[]>("/admin/ai/models"),
+          apiFetch<ModelOption[]>("/admin/ai/text-models"),
           apiFetch<AiSettings>("/admin/ai/settings"),
+          apiFetch<AiKeyStatus>("/admin/ai/keys"),
         ]);
-        setModels(m);
-        setSettings(s);
+        setModels(imageModels);
+        setTextModels(supportTextModels);
+        setSettings({
+          ...settingsData,
+          supportModel: settingsData.supportModel ?? "openai/gpt-4o-mini",
+          supportInstructions: settingsData.supportInstructions ?? "",
+          supportInstructionFileName: settingsData.supportInstructionFileName ?? "",
+          photoshootApprovalMode: settingsData.photoshootApprovalMode ?? "manual",
+          photoshootVisionModel: settingsData.photoshootVisionModel ?? "openai/gpt-4o-mini",
+        });
+        setKeyStatus(keyData);
         setProviderByCat({
-          styles: providerOf(s.styles),
-          photoshoot: providerOf(s.photoshoot),
-          review: providerOf(s.review),
+          styles: providerOf(settingsData.styles),
+          photoshoot: providerOf(settingsData.photoshoot),
+          review: providerOf(settingsData.review),
         });
       } catch (e) {
         setErr(e instanceof Error ? e.message : "Ошибка загрузки");
       } finally {
         setLoading(false);
       }
-    })();
   }, []);
+
+  useEffect(() => {
+    void loadAiConfig();
+  }, [loadAiConfig]);
 
   async function save() {
     if (!settings) return;
@@ -1227,17 +1434,62 @@ function AiModelsTab() {
     setErr("");
     setOk(false);
     try {
+      const keyUpdates: Partial<Record<"openrouter" | "kie", string>> = {};
+      if (openrouterKey.trim()) keyUpdates.openrouter = openrouterKey.trim();
+      if (kieKey.trim()) keyUpdates.kie = kieKey.trim();
+      if (Object.keys(keyUpdates).length > 0) {
+        await apiFetch<AiKeyStatus>("/admin/ai/keys", {
+          method: "PATCH",
+          body: JSON.stringify(keyUpdates),
+        });
+      }
       const updated = await apiFetch<AiSettings>("/admin/ai/settings", {
         method: "PATCH",
         body: JSON.stringify(settings),
       });
       setSettings(updated);
+      setOpenrouterKey("");
+      setKieKey("");
+      await loadAiConfig();
       setOk(true);
       setTimeout(() => setOk(false), 2500);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Ошибка сохранения");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function uploadInstruction(file: File | null) {
+    if (!file) return;
+    setUploadingInstruction(true);
+    setErr("");
+    setOk(false);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const token = getToken();
+      const res = await fetch("/api/admin/ai/support-instructions-file", {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        body: fd,
+      });
+      if (!res.ok) {
+        let msg = `${res.status} ${res.statusText}`;
+        try {
+          const body = await res.json();
+          if (body?.error) msg = body.error;
+        } catch { /* ignore */ }
+        throw new Error(msg);
+      }
+      const data = (await res.json()) as Pick<AiSettings, "supportInstructions" | "supportInstructionFileName">;
+      setSettings((s) => (s ? { ...s, ...data } : s));
+      setOk(true);
+      setTimeout(() => setOk(false), 2500);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Не удалось загрузить файл");
+    } finally {
+      setUploadingInstruction(false);
     }
   }
 
@@ -1250,13 +1502,146 @@ function AiModelsTab() {
       <div className="mb-6">
         <h2 className="text-3xl font-bold text-white">ИИ-модели</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Для каждой категории сначала выберите сервис генерации (kie.ai или OpenRouter), затем конкретную модель. Список моделей OpenRouter подгружается в реальном времени.
+          Добавьте API-ключи, затем для каждой категории выберите сервис генерации и конкретную модель. Список моделей OpenRouter подгружается в реальном времени.
         </p>
       </div>
 
       {err && <div className="text-sm rounded-lg p-3 border text-red-400 bg-red-500/10 border-red-500/30 mb-4">{err}</div>}
 
       <div className="space-y-5 max-w-2xl">
+        <div className="bg-card border border-border rounded-xl p-5">
+          <div className="mb-4">
+            <div className="font-semibold text-white">API-ключи</div>
+            <div className="text-xs text-muted-foreground">Ключи сохраняются в настройках проекта и используются сервером сразу после сохранения.</div>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-4">
+            <Field label="OpenRouter API key">
+              <Input
+                type="password"
+                value={openrouterKey}
+                onChange={(e) => setOpenrouterKey(e.target.value)}
+                placeholder={keyStatus?.openrouter.configured ? "Ключ уже задан" : "sk-or-..."}
+                className="bg-secondary border-border text-white"
+                autoComplete="off"
+              />
+              <KeyStatus status={keyStatus?.openrouter} />
+            </Field>
+            <Field label="KIE / kie.ai API key">
+              <Input
+                type="password"
+                value={kieKey}
+                onChange={(e) => setKieKey(e.target.value)}
+                placeholder={keyStatus?.kie.configured ? "Ключ уже задан" : "KIE API key"}
+                className="bg-secondary border-border text-white"
+                autoComplete="off"
+              />
+              <KeyStatus status={keyStatus?.kie} />
+            </Field>
+          </div>
+        </div>
+
+        <div className="bg-card border border-border rounded-xl p-5">
+          <div className="mb-4">
+            <div className="font-semibold text-white">Проверка опорного кадра фотосессии</div>
+            <div className="text-xs text-muted-foreground">
+              Определяет, кто подтверждает первый кадр перед генерацией серии из 12 фотографий.
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { value: "manual" as const, label: "Пользователь", desc: "Показывать кадр и принимать комментарий с правками" },
+              { value: "automatic" as const, label: "Нейросеть", desc: "Проверять сходство модели и точность товара автоматически" },
+            ].map((option) => {
+              const active = settings?.photoshootApprovalMode === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setSettings((s) => s ? { ...s, photoshootApprovalMode: option.value } : s)}
+                  className={`rounded-lg border px-3 py-3 text-left transition-colors ${
+                    active
+                      ? "border-primary bg-primary/10 text-white"
+                      : "border-border bg-secondary text-muted-foreground hover:border-primary/40"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold">{option.label}</span>
+                    {active && <Check size={15} className="text-primary shrink-0" />}
+                  </div>
+                  <div className="text-[11px] leading-tight mt-1">{option.desc}</div>
+                </button>
+              );
+            })}
+          </div>
+          {settings?.photoshootApprovalMode === "automatic" && (
+            <div className="mt-4">
+              <Field label="Vision-модель для проверки">
+                <ModelSelect
+                  models={textModels}
+                  value={settings.photoshootVisionModel}
+                  onChange={(v) => setSettings((s) => s ? { ...s, photoshootVisionModel: v } : s)}
+                />
+              </Field>
+            </div>
+          )}
+        </div>
+
+        <div className="bg-card border border-border rounded-xl p-5">
+          <div className="mb-4">
+            <div className="font-semibold text-white">ИИ поддержки</div>
+            <div className="text-xs text-muted-foreground">
+              Выберите OpenRouter-модель, затем загрузите файл или вставьте инструкцию вручную. Помощник будет отвечать и задавать уточняющие вопросы с учетом этой базы.
+            </div>
+          </div>
+          <div className="space-y-4">
+            <Field label="Модель OpenRouter для поддержки">
+              <ModelSelect
+                models={textModels}
+                value={settings?.supportModel ?? "openai/gpt-4o-mini"}
+                onChange={(v) => setSettings((s) => (s ? { ...s, supportModel: v } : s))}
+              />
+            </Field>
+            <Field label="Файл с инструкциями">
+              <div className="rounded-xl border border-dashed border-border bg-secondary p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="text-sm text-white truncate">
+                      {settings?.supportInstructionFileName || "Файл не загружен"}
+                    </div>
+                    <div className="text-xs text-muted-foreground">TXT, MD, JSON, CSV, HTML, PDF или DOCX до 10 МБ</div>
+                  </div>
+                  <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-md bg-gradient-primary px-4 py-2 text-sm font-medium text-white">
+                    {uploadingInstruction ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+                    Загрузить
+                    <input
+                      type="file"
+                      className="hidden"
+                      accept=".txt,.md,.markdown,.json,.csv,.xml,.html,.htm,.pdf,.docx,text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] ?? null;
+                        e.target.value = "";
+                        void uploadInstruction(file);
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+            </Field>
+          </div>
+          <div className="mt-4">
+          <Field label="Инструкция / документ для ассистента">
+            <Textarea
+              value={settings?.supportInstructions ?? ""}
+              onChange={(e) => setSettings((s) => (s ? { ...s, supportInstructions: e.target.value } : s))}
+              rows={8}
+              placeholder={"Например:\n- говори вежливо и коротко;\n- всегда уточняй email и проблему;\n- если проблема с оплатой, спроси дату платежа и сумму;\n- если генерация не пришла, спроси номер заказа."}
+              className="bg-secondary border-border text-white"
+            />
+          </Field>
+          </div>
+        </div>
+
         {AI_CATEGORIES.map((cat) => {
           const value = settings?.[cat.key] ?? "";
           const provider = providerByCat[cat.key];
@@ -1323,6 +1708,18 @@ function AiModelsTab() {
         {ok && <span className="text-sm text-green-400 flex items-center gap-1"><Check size={16} /> Сохранено</span>}
         <span className="text-xs text-muted-foreground ml-auto">Доступно моделей: {models.length}</span>
       </div>
+    </div>
+  );
+}
+
+function KeyStatus({ status }: { status?: AiKeyStatus["openrouter"] }) {
+  if (!status) return null;
+  if (!status.configured) {
+    return <div className="mt-1 text-xs text-amber-400">Ключ не задан</div>;
+  }
+  return (
+    <div className="mt-1 text-xs text-green-400">
+      Ключ задан{status.source === "env" ? " через env" : ""}
     </div>
   );
 }

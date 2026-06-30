@@ -1,8 +1,10 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
+import { randomUUID } from "node:crypto";
 import { db, usersTable, ordersTable, stylesTable, tariffsTable, servicesTable, locationsTable } from "@workspace/db";
 import { eq, desc, sql } from "drizzle-orm";
 import { z } from "zod";
 import { hashPassword, requireAuth } from "../lib/auth";
+import { affectedRows } from "../lib/db-result";
 import { getOpenAI, assistModel } from "../lib/openai";
 import { kieCreateNanoBananaProTask, kieGetTask, kieUploadFile } from "../lib/kie";
 import { uploadBufferToStorage, downloadStorageObject } from "../lib/storage-helpers";
@@ -72,8 +74,8 @@ router.patch("/admin/users/:id", async (req, res) => {
     res.status(400).json({ error: "Nothing to update" });
     return;
   }
-  const [user] = await db.update(usersTable).set(updates).where(eq(usersTable.id, req.params.id)).returning();
-  if (!user) {
+  const result = await db.update(usersTable).set(updates).where(eq(usersTable.id, req.params.id));
+  if (affectedRows(result) === 0) {
     res.status(404).json({ error: "Not found" });
     return;
   }
@@ -143,7 +145,9 @@ router.get("/admin/tariffs", async (_req, res) => {
 router.post("/admin/tariffs", async (req, res) => {
   const parsed = TariffSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Invalid input" }); return; }
-  const [t] = await db.insert(tariffsTable).values({ ...parsed.data, price: parsed.data.price.toFixed(2) }).returning();
+  const id = randomUUID();
+  await db.insert(tariffsTable).values({ id, ...parsed.data, price: parsed.data.price.toFixed(2) });
+  const [t] = await db.select().from(tariffsTable).where(eq(tariffsTable.id, id)).limit(1);
   res.status(201).json(t);
 });
 
@@ -191,10 +195,12 @@ router.post("/admin/styles", async (req, res) => {
   const d = parsed.data;
   let sortOrder = d.sortOrder;
   if (sortOrder === undefined) {
-    const maxRow = await db.select({ m: sql<number>`coalesce(max(${stylesTable.sortOrder}),0)::int` }).from(stylesTable);
-    sortOrder = (maxRow[0]?.m ?? 0) + 1;
+    const maxRow = await db.select({ m: sql<number>`coalesce(max(${stylesTable.sortOrder}),0)` }).from(stylesTable);
+    sortOrder = Number(maxRow[0]?.m ?? 0) + 1;
   }
-  const [s] = await db.insert(stylesTable).values({
+  const id = randomUUID();
+  await db.insert(stylesTable).values({
+    id,
     title: d.title,
     shortDescription: d.shortDescription,
     fullDescription: d.fullDescription,
@@ -210,7 +216,8 @@ router.post("/admin/styles", async (req, res) => {
     sortOrder,
     ordersCount: d.ordersCount,
     photosRequired: d.photosRequired,
-  }).returning();
+  });
+  const [s] = await db.select().from(stylesTable).where(eq(stylesTable.id, id)).limit(1);
   res.status(201).json(s);
 });
 
@@ -271,8 +278,8 @@ router.post("/admin/styles/assist", async (req, res) => {
 
   let result: z.infer<typeof AssistResultSchema>;
   try {
-    const completion = await getOpenAI().chat.completions.create({
-      model: assistModel(),
+      const completion = await (await getOpenAI()).chat.completions.create({
+      model: await assistModel(),
       response_format: { type: "json_object" },
       messages: [
         {

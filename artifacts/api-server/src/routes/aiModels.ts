@@ -1,5 +1,6 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
-import { db, usersTable } from "@workspace/db";
+import multer from "multer";
+import { db, appSettingsTable, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { requireAuth } from "../lib/auth";
@@ -9,6 +10,8 @@ import {
   setCategoryModel,
   type GenCategory,
 } from "../lib/imageGen";
+import { getApiKeyStatus, setApiKey } from "../lib/apiKeys";
+import { DEFAULT_SUPPORT_MODEL, listOpenRouterTextModels } from "../lib/openai";
 
 const router: IRouter = Router();
 
@@ -23,15 +26,67 @@ router.get("/admin/ai/models", requireAuth, requireAdmin, async (_req, res) => {
   res.json(await listImageModels());
 });
 
+router.get("/admin/ai/text-models", requireAuth, requireAdmin, async (_req, res) => {
+  res.json(await listOpenRouterTextModels());
+});
+
 router.get("/admin/ai/settings", requireAuth, requireAdmin, async (_req, res) => {
-  res.json(await getAllCategoryModels());
+  const models = await getAllCategoryModels();
+  const rows = await db.select().from(appSettingsTable);
+  const map = new Map(rows.map((r) => [r.key, r.value] as const));
+  res.json({
+    ...models,
+    supportModel: map.get("support:model") || DEFAULT_SUPPORT_MODEL,
+    supportInstructions: map.get("support:instructions") || "",
+    supportInstructionFileName: map.get("support:instruction_file_name") || "",
+    photoshootApprovalMode: map.get("photoshoot:approval_mode") || "manual",
+    photoshootVisionModel: map.get("photoshoot:vision_model") || DEFAULT_SUPPORT_MODEL,
+  });
+});
+
+router.get("/admin/ai/keys", requireAuth, requireAdmin, async (_req, res) => {
+  res.json(await getApiKeyStatus());
+});
+
+const KeysSchema = z.object({
+  openrouter: z.string().optional(),
+  kie: z.string().optional(),
+});
+
+router.patch("/admin/ai/keys", requireAuth, requireAdmin, async (req, res) => {
+  const parsed = KeysSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid body" });
+    return;
+  }
+  if (typeof parsed.data.openrouter === "string") {
+    await setApiKey("openrouter", parsed.data.openrouter);
+  }
+  if (typeof parsed.data.kie === "string") {
+    await setApiKey("kie", parsed.data.kie);
+  }
+  res.json(await getApiKeyStatus());
 });
 
 const SettingsSchema = z.object({
   styles: z.string().min(1).optional(),
   photoshoot: z.string().min(1).optional(),
   review: z.string().min(1).optional(),
+  supportModel: z.string().min(1).optional(),
+  supportInstructions: z.string().max(20000).optional(),
+  supportInstructionFileName: z.string().max(255).optional(),
+  photoshootApprovalMode: z.enum(["manual", "automatic"]).optional(),
+  photoshootVisionModel: z.string().min(1).optional(),
 });
+
+async function setSetting(key: string, value: string): Promise<void> {
+  await db
+    .insert(appSettingsTable)
+    .values({ key, value, updatedAt: new Date() })
+    .onDuplicateKeyUpdate({
+      set: { value, updatedAt: new Date() },
+    });
+}
 
 router.patch("/admin/ai/settings", requireAuth, requireAdmin, async (req, res) => {
   const parsed = SettingsSchema.safeParse(req.body);
@@ -44,7 +99,112 @@ router.patch("/admin/ai/settings", requireAuth, requireAdmin, async (req, res) =
     const v = parsed.data[c];
     if (typeof v === "string") await setCategoryModel(c, v);
   }
-  res.json(await getAllCategoryModels());
+  if (typeof parsed.data.supportModel === "string") {
+    await setSetting("support:model", parsed.data.supportModel);
+  }
+  if (typeof parsed.data.supportInstructions === "string") {
+    await setSetting("support:instructions", parsed.data.supportInstructions);
+  }
+  if (typeof parsed.data.supportInstructionFileName === "string") {
+    await setSetting("support:instruction_file_name", parsed.data.supportInstructionFileName);
+  }
+  if (typeof parsed.data.photoshootApprovalMode === "string") {
+    await setSetting("photoshoot:approval_mode", parsed.data.photoshootApprovalMode);
+  }
+  if (typeof parsed.data.photoshootVisionModel === "string") {
+    await setSetting("photoshoot:vision_model", parsed.data.photoshootVisionModel);
+  }
+  const models = await getAllCategoryModels();
+  const rows = await db.select().from(appSettingsTable);
+  const map = new Map(rows.map((r) => [r.key, r.value] as const));
+  res.json({
+    ...models,
+    supportModel: map.get("support:model") || DEFAULT_SUPPORT_MODEL,
+    supportInstructions: map.get("support:instructions") || "",
+    supportInstructionFileName: map.get("support:instruction_file_name") || "",
+    photoshootApprovalMode: map.get("photoshoot:approval_mode") || "manual",
+    photoshootVisionModel: map.get("photoshoot:vision_model") || DEFAULT_SUPPORT_MODEL,
+  });
 });
+
+const instructionUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+});
+
+async function extractInstructionText(file: Express.Multer.File): Promise<string> {
+  const name = file.originalname.toLowerCase();
+  const mime = file.mimetype;
+  if (
+    mime.startsWith("text/") ||
+    ["application/json", "application/xml", "text/markdown"].includes(mime) ||
+    /\.(txt|md|markdown|json|csv|xml|html?)$/.test(name)
+  ) {
+    return file.buffer.toString("utf8");
+  }
+  if (mime === "application/pdf" || name.endsWith(".pdf")) {
+    try {
+      const { PDFParse } = await import("pdf-parse");
+      const parser = new PDFParse({ data: file.buffer });
+      try {
+        const parsed = await parser.getText();
+        return parsed.text ?? "";
+      } finally {
+        await parser.destroy();
+      }
+    } catch {
+      // Some PDFs have damaged xref tables or unusual encodings. This fallback
+      // still recovers plain literal strings from simple instruction PDFs.
+      const raw = file.buffer.toString("latin1");
+      const chunks = Array.from(raw.matchAll(/\(([^()]{3,})\)/g))
+        .map((m) => m[1] ?? "")
+        .map((s) => s.replace(/\\([nrtbf()\\])/g, (_all, ch: string) => {
+          const map: Record<string, string> = { n: "\n", r: "\r", t: "\t", b: "\b", f: "\f", "(": "(", ")": ")", "\\": "\\" };
+          return map[ch] ?? ch;
+        }))
+        .filter((s) => /[A-Za-zА-Яа-я0-9]/.test(s));
+      return chunks.join("\n").trim();
+    }
+  }
+  if (
+    mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    name.endsWith(".docx")
+  ) {
+    const mammoth = await import("mammoth");
+    const parsed = await mammoth.extractRawText({ buffer: file.buffer });
+    return parsed.value;
+  }
+  throw new Error("Поддерживаются TXT/MD/JSON/CSV/HTML/PDF/DOCX");
+}
+
+router.post(
+  "/admin/ai/support-instructions-file",
+  requireAuth,
+  requireAdmin,
+  instructionUpload.single("file"),
+  async (req, res) => {
+    const file = req.file;
+    if (!file) {
+      res.status(400).json({ error: "Файл не загружен" });
+      return;
+    }
+    try {
+      const text = (await extractInstructionText(file)).trim();
+      if (!text) {
+        res.status(400).json({ error: "Не удалось извлечь текст из файла" });
+        return;
+      }
+      if (text.length > 20000) {
+        res.status(400).json({ error: "Инструкция получилась длиннее 20 000 символов" });
+        return;
+      }
+      await setSetting("support:instructions", text);
+      await setSetting("support:instruction_file_name", file.originalname);
+      res.json({ supportInstructions: text, supportInstructionFileName: file.originalname });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : "Не удалось прочитать файл" });
+    }
+  },
+);
 
 export default router;

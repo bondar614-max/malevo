@@ -32,11 +32,11 @@ router.get("/styles", async (req, res) => {
 
 router.get("/styles/categories", async (_req, res) => {
   const rows = await db
-    .select({ category: stylesTable.category, count: sql<number>`count(*)::int` })
+    .select({ category: stylesTable.category, count: sql<number>`count(*)` })
     .from(stylesTable)
     .where(eq(stylesTable.isActive, true))
     .groupBy(stylesTable.category);
-  res.json(rows);
+  res.json(rows.map((row) => ({ ...row, count: Number(row.count) })));
 });
 
 router.get("/styles/trending", async (_req, res) => {

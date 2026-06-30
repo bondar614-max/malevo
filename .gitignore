@@ -28,6 +28,9 @@ node_modules
 !.vscode/extensions.json
 
 # misc
+.env
+.env.*
+!.env.example
 /.sass-cache
 /connect.lock
 /coverage
@@ -35,6 +38,7 @@ node_modules
 npm-debug.log
 yarn-error.log
 testem.log
+.logs/
 /typings
 
 # System Files
@@ -47,3 +51,6 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+artifacts/api-server/public/admin/
+artifacts/api-server/public/generated/
+artifacts/api-server/public/source/

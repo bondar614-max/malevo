@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { randomUUID } from "node:crypto";
 import { db, usersTable, ordersTable, stylesTable, servicesTable, locationsTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { z } from "zod";
@@ -48,10 +49,11 @@ router.post("/auth/register", async (req, res) => {
     return;
   }
   const passwordHash = await hashPassword(password);
-  const [user] = await db
+  const id = randomUUID();
+  await db
     .insert(usersTable)
-    .values({ email, name: name ?? null, passwordHash })
-    .returning();
+    .values({ id, email, name: name ?? null, passwordHash });
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, id)).limit(1);
   const token = signToken({ userId: user!.id, email: user!.email });
   res.status(201).json({ token, user: userResponse(user!) });
 });
@@ -140,7 +142,8 @@ router.patch("/auth/me", requireAuth, async (req, res) => {
     return;
   }
 
-  const [updated] = await db.update(usersTable).set(updates).where(eq(usersTable.id, user.id)).returning();
+  await db.update(usersTable).set(updates).where(eq(usersTable.id, user.id));
+  const [updated] = await db.select().from(usersTable).where(eq(usersTable.id, user.id)).limit(1);
   res.json(userResponse(updated!));
 });
 
@@ -151,6 +154,7 @@ router.get("/auth/me/orders", requireAuth, async (req, res) => {
       status: ordersTable.status,
       amount: ordersTable.amount,
       sourcePhotoUrl: ordersTable.sourcePhotoUrl,
+      anchorPhotoUrl: ordersTable.anchorPhotoUrl,
       resultPhotos: ordersTable.resultPhotos,
       createdAt: ordersTable.createdAt,
       completedAt: ordersTable.completedAt,
@@ -194,6 +198,7 @@ router.get("/auth/me/orders", requireAuth, async (req, res) => {
       status: r.status,
       amount: Number(r.amount),
       sourcePhotoUrl: r.sourcePhotoUrl,
+      anchorPhotoUrl: r.anchorPhotoUrl,
       resultPhotos: r.resultPhotos,
       createdAt: r.createdAt.toISOString(),
       completedAt: r.completedAt ? r.completedAt.toISOString() : null,

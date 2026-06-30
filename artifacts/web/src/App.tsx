@@ -7,12 +7,14 @@ import NotFound from "@/pages/not-found";
 import Home from "@/pages/Home";
 import Generate from "@/pages/Generate";
 import Service from "@/pages/Service";
+import BusinessServices from "@/pages/BusinessServices";
 import Styles from "@/pages/Styles";
 import Admin from "@/pages/Admin";
 import AdminLogin from "@/pages/AdminLogin";
 import Account from "@/pages/Account";
 import { AuthProvider } from "@/lib/auth";
 import { AuthModalProvider } from "@/components/auth/AuthModal";
+import { SupportWidget } from "@/components/support/SupportWidget";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -34,6 +36,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={Home} />
+      <Route path="/business-services" component={BusinessServices} />
       <Route path="/styles" component={Styles} />
       <Route path="/generate/:id" component={Generate} />
       <Route path="/service/:key" component={Service} />
@@ -59,6 +62,7 @@ function App() {
             <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
               <ScrollToTop />
               <Router />
+              <SupportWidget />
             </WouterRouter>
             <Toaster />
           </TooltipProvider>

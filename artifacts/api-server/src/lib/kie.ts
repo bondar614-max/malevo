@@ -1,10 +1,11 @@
 import { logger } from "./logger";
+import { getApiKey } from "./apiKeys";
 
 const KIE_BASE = "https://api.kie.ai";
 const KIE_UPLOAD_BASE = "https://kieai.redpandaai.co";
 
-function apiKey(): string {
-  const k = process.env["KIE_AI_API_KEY"];
+async function apiKey(): Promise<string> {
+  const k = await getApiKey("kie");
   if (!k) throw new Error("KIE_AI_API_KEY is not configured");
   return k;
 }
@@ -43,7 +44,7 @@ export async function kieUploadFile(
     `${KIE_UPLOAD_BASE}/api/file-stream-upload`,
     {
       method: "POST",
-      headers: { Authorization: `Bearer ${apiKey()}` },
+      headers: { Authorization: `Bearer ${await apiKey()}` },
       body: form,
     },
     120_000,
@@ -96,7 +97,7 @@ export async function kieCreateNanoBananaProTask(input: KieCreateTaskInput): Pro
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${apiKey()}`,
+        Authorization: `Bearer ${await apiKey()}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
@@ -124,7 +125,7 @@ export interface KieTaskInfo {
 export async function kieGetTask(taskId: string): Promise<KieTaskInfo> {
   const res = await fetchWithTimeout(
     `${KIE_BASE}/api/v1/jobs/recordInfo?taskId=${encodeURIComponent(taskId)}`,
-    { headers: { Authorization: `Bearer ${apiKey()}` } },
+    { headers: { Authorization: `Bearer ${await apiKey()}` } },
     30_000,
   );
   const json = (await res.json()) as {

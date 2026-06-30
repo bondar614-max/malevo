@@ -1,4 +1,5 @@
 import { Link } from "wouter";
+import { BrandLogo } from "@/components/layout/BrandLogo";
 
 export function Footer() {
   return (
@@ -6,13 +7,8 @@ export function Footer() {
       <div className="container mx-auto px-4 md:px-6">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12 mb-16">
           <div className="flex flex-col gap-4">
-            <Link href="/" className="flex items-center gap-2 group w-fit">
-              <div className="w-8 h-8 rounded-lg bg-gradient-primary flex items-center justify-center text-white font-bold">
-                ✨
-              </div>
-              <span className="font-bold text-xl tracking-tight text-white">
-                PhotoGen <span className="text-gradient">AI</span>
-              </span>
+            <Link href="/" className="group w-fit transition-[filter] hover:brightness-125">
+              <BrandLogo />
             </Link>
             <p className="text-muted-foreground text-sm leading-relaxed max-w-xs">
               AI фотографии за 60 секунд. Профессиональные портреты, аватары и арт-генерации.
@@ -62,7 +58,7 @@ export function Footer() {
 
         <div className="border-t border-border pt-8 flex flex-col md:flex-row items-center justify-between gap-4">
           <p className="text-muted-foreground text-sm">
-            © 2026 PhotoGen AI. Все права защищены.
+            © 2026 MALEVO. Все права защищены.
           </p>
           <div className="flex gap-6">
             <a href="#" className="text-sm text-muted-foreground hover:text-white transition-colors">Политика конфиденциальности</a>

@@ -1,8 +1,7 @@
-import { drizzle } from "drizzle-orm/node-postgres";
-import pg from "pg";
+import { readFileSync } from "node:fs";
+import { drizzle } from "drizzle-orm/mysql2";
+import mysql from "mysql2/promise";
 import * as schema from "./schema";
-
-const { Pool } = pg;
 
 if (!process.env.DATABASE_URL) {
   throw new Error(
@@ -10,7 +9,17 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
-export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-export const db = drizzle(pool, { schema });
+const sslCaPath = process.env.MYSQL_SSL_CA?.trim();
+const ssl = sslCaPath
+  ? { ca: readFileSync(sslCaPath, "utf8"), rejectUnauthorized: true }
+  : process.env.MYSQL_SSL === "true"
+    ? { rejectUnauthorized: true }
+    : undefined;
+
+export const pool = mysql.createPool({
+  uri: process.env.DATABASE_URL,
+  ...(ssl ? { ssl } : {}),
+});
+export const db = drizzle(pool, { schema, mode: "default" });
 
 export * from "./schema";

@@ -1,4 +1,5 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
+import { randomUUID } from "node:crypto";
 import { db, servicesTable, locationsTable, usersTable } from "@workspace/db";
 import { eq, asc, and } from "drizzle-orm";
 import { z } from "zod";
@@ -133,7 +134,9 @@ const LocationCreateSchema = z.object({
 router.post("/admin/locations", requireAuth, requireAdmin, async (req, res) => {
   const parsed = LocationCreateSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Invalid input" }); return; }
-  const [row] = await db.insert(locationsTable).values(parsed.data).returning();
+  const id = randomUUID();
+  await db.insert(locationsTable).values({ id, ...parsed.data });
+  const [row] = await db.select().from(locationsTable).where(eq(locationsTable.id, id)).limit(1);
   res.status(201).json(row);
 });
 

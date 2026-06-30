@@ -11,6 +11,7 @@ import uploadsRouter from "./uploads";
 import storageRouter from "./storage";
 import servicesRouter from "./services";
 import aiModelsRouter from "./aiModels";
+import supportRouter from "./support";
 
 const router: IRouter = Router();
 
@@ -25,6 +26,7 @@ router.use(uploadsRouter);
 router.use(storageRouter);
 router.use(servicesRouter);
 router.use(aiModelsRouter);
+router.use(supportRouter);
 router.use(adminRouter);
 
 export default router;

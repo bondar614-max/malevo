@@ -4,6 +4,7 @@ import { db, appSettingsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { kieUploadFile, kieCreateNanoBananaProTask, kieGetTask } from "./kie";
 import { logger } from "./logger";
+import { getApiKey } from "./apiKeys";
 
 export type GenCategory = "styles" | "photoshoot" | "review";
 
@@ -75,8 +76,7 @@ export async function setCategoryModel(category: GenCategory, model: string): Pr
   await db
     .insert(appSettingsTable)
     .values({ key: CATEGORY_KEYS[category], value: model })
-    .onConflictDoUpdate({
-      target: appSettingsTable.key,
+    .onDuplicateKeyUpdate({
       set: { value: model, updatedAt: new Date() },
     });
 }
@@ -92,7 +92,7 @@ export async function listImageModels(): Promise<ModelOption[]> {
   const out: ModelOption[] = [
     { id: DEFAULT_MODEL, name: "Nano Banana Pro", provider: "kie" },
   ];
-  const key = process.env["OPENAI_API_KEY"];
+  const key = await getApiKey("openrouter");
   if (!key) return out;
   try {
     const res = await fetchWithTimeout(
@@ -262,7 +262,7 @@ type ORContent =
   | { type: "image_url"; image_url: { url: string } };
 
 async function generateViaOpenRouter(opts: GenerateOpts): Promise<GenImage[]> {
-  const key = process.env["OPENAI_API_KEY"];
+  const key = await getApiKey("openrouter");
   if (!key) throw new Error("OPENAI_API_KEY is not configured");
 
   const content: ORContent[] = [

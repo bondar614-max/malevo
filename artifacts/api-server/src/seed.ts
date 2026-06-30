@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { db, stylesTable, galleryTable, reviewsTable } from "@workspace/db";
 
 const baseUrl = "/api/static/seed";
@@ -34,10 +35,12 @@ async function seed(): Promise<void> {
   await db.delete(reviewsTable);
   await db.delete(stylesTable);
 
-  const insertedStyles = await db
+  const stylesWithIds = styles.map((style) => ({ ...style, id: randomUUID() }));
+  await db
     .insert(stylesTable)
     .values(
-      styles.map((s, i) => ({
+      stylesWithIds.map((s, i) => ({
+        id: s.id,
         title: s.title,
         shortDescription: s.shortDescription,
         fullDescription: s.fullDescription,
@@ -54,12 +57,11 @@ async function seed(): Promise<void> {
         category: s.category,
         rating: s.rating,
       })),
-    )
-    .returning();
+    );
 
   await db.insert(galleryTable).values(
     galleryAssign.map((g, i) => {
-      const s = insertedStyles[g.styleIdx]!;
+      const s = stylesWithIds[g.styleIdx]!;
       return { imageUrl: `${baseUrl}/${g.image}`, styleId: s.id, styleTitle: s.title, sortOrder: i };
     }),
   );
@@ -67,7 +69,7 @@ async function seed(): Promise<void> {
   await db.insert(reviewsTable).values(reviews);
 
   // eslint-disable-next-line no-console
-  console.log(`Seeded ${insertedStyles.length} styles, ${galleryAssign.length} gallery, ${reviews.length} reviews`);
+  console.log(`Seeded ${stylesWithIds.length} styles, ${galleryAssign.length} gallery, ${reviews.length} reviews`);
 }
 
 seed().then(() => process.exit(0)).catch((err) => {

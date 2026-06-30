@@ -48,7 +48,7 @@ export function ServicesBlock() {
           {services.map((s) => {
             const Icon = s.key === "wb-photoshoot" ? Camera : MessageSquare;
             return (
-              <Link key={s.key} href={`/service/${s.key}`}>
+              <Link key={s.key} href="/business-services">
                 <div
                   className="group relative rounded-3xl border border-border bg-card overflow-hidden hover:-translate-y-2 transition-all duration-300 cursor-pointer h-full"
                   style={{

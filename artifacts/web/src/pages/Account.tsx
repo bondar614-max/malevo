@@ -15,6 +15,7 @@ interface OrderRow {
   status: string;
   amount: number;
   sourcePhotoUrl: string | null;
+  anchorPhotoUrl: string | null;
   resultPhotos: string[];
   createdAt: string;
   completedAt: string | null;
@@ -38,6 +39,8 @@ function formatDate(iso: string | null): string {
 const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
   pending: { label: "В очереди", cls: "bg-yellow-500/15 text-yellow-300 border-yellow-500/30" },
   processing: { label: "Обработка", cls: "bg-blue-500/15 text-blue-300 border-blue-500/30" },
+  awaiting_approval: { label: "Ожидает подтверждения", cls: "bg-purple-500/15 text-purple-300 border-purple-500/30" },
+  success: { label: "Готово", cls: "bg-green-500/15 text-green-300 border-green-500/30" },
   completed: { label: "Готово", cls: "bg-green-500/15 text-green-300 border-green-500/30" },
   failed: { label: "Ошибка", cls: "bg-red-500/15 text-red-300 border-red-500/30" },
 };
@@ -262,7 +265,7 @@ function OrdersTab() {
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {rows.map((o) => {
           const status = STATUS_LABELS[o.status] ?? { label: o.status, cls: "bg-secondary border-border text-muted-foreground" };
-          const preview = o.resultPhotos[0] || o.servicePreview || o.stylePreview;
+          const preview = o.resultPhotos[0] || o.anchorPhotoUrl || o.servicePreview || o.stylePreview;
           const title = o.serviceTitle ?? o.styleTitle ?? "Удалено";
           const subtitle = o.locationName ? `Локация: ${o.locationName}` : null;
           const hasPhotos = o.resultPhotos.length > 0;
@@ -295,7 +298,13 @@ function OrdersTab() {
                 <div className="text-xs text-muted-foreground mt-1">{formatDate(o.createdAt)}</div>
                 <div className="mt-auto pt-3 flex items-center justify-between">
                   <span className="text-sm text-white">{o.amount.toFixed(2)} ₽</span>
-                  {hasPhotos && (
+                  {o.status === "awaiting_approval" && o.serviceKey === "wb-photoshoot" ? (
+                    <Link href={`/service/wb-photoshoot?order=${o.id}`}>
+                      <button type="button" className="text-xs text-[#7C3AED] hover:underline">
+                        Проверить кадр
+                      </button>
+                    </Link>
+                  ) : hasPhotos && (
                     <button type="button" onClick={openLightbox} className="text-xs text-[#7C3AED] hover:underline">
                       {o.resultPhotos.length > 1 ? "Смотреть все фото" : "Открыть"}
                     </button>

@@ -6,3 +6,4 @@ export * from "./gallery";
 export * from "./tariffs";
 export * from "./services";
 export * from "./settings";
+export * from "./support";
