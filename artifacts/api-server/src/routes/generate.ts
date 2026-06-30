@@ -8,6 +8,7 @@ import { requireAuth } from "../lib/auth";
 import { downloadStorageObject, uploadBufferToStorage } from "../lib/storage-helpers";
 import { affectedRows } from "../lib/db-result";
 import { generateImages, getCategoryModel, type GenImage } from "../lib/imageGen";
+import { getApiKey } from "../lib/apiKeys";
 import { DEFAULT_SUPPORT_MODEL, getOpenAI } from "../lib/openai";
 
 const REVIEW_AGES = new Set(["21-30", "30-45", "45+", "random"]);
@@ -16,6 +17,13 @@ const PHOTOSHOOT_SEASONS = new Set(["winter", "spring", "summer", "autumn"]);
 const PHOTOSHOOT_TIMES = new Set(["morning", "day", "evening", "night"]);
 const MAX_SETS = 10;
 const PHOTOS_PER_SET = 3;
+
+async function ensureModelReady(model: string): Promise<string | null> {
+  if (model.startsWith("kie:")) {
+    return (await getApiKey("kie")) ? null : "KIE API key не настроен. Добавьте ключ в админке в разделе AI.";
+  }
+  return (await getApiKey("openrouter")) ? null : "OpenRouter API key не настроен. Добавьте ключ в админке в разделе AI.";
+}
 
 const AGE_LABELS: Record<string, string> = {
   "21-30": "21-30 years old",
@@ -599,6 +607,15 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
       }
     }
 
+    const isReview = serviceKey === "review";
+    const isPhotoshoot = serviceKey === "wb-photoshoot";
+    const selectedGenerationModel = await getCategoryModel(isReview ? "review" : "photoshoot");
+    const configurationError = await ensureModelReady(selectedGenerationModel);
+    if (configurationError) {
+      res.status(400).json({ error: configurationError });
+      return;
+    }
+
     const userId = req.auth!.userId;
     const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
     if (!user) { res.status(401).json({ error: "Unauthorized" }); return; }
@@ -617,8 +634,6 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
       return;
     }
 
-    const isReview = serviceKey === "review";
-    const isPhotoshoot = serviceKey === "wb-photoshoot";
     const approvalSettings = isPhotoshoot ? await getPhotoshootApprovalSettings() : null;
     const photoshootPrompt = isPhotoshoot
       ? composePhotoshootPrompt({
@@ -683,7 +698,7 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
 
       void (async () => {
         try {
-          const model = await getCategoryModel("review");
+          const model = selectedGenerationModel!;
 
           // Store the source photo(s) in our storage for the order record.
           const seedUrls: string[] = [];
@@ -763,7 +778,7 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
     if (isPhotoshoot) {
       void (async () => {
         try {
-          const model = await getCategoryModel("photoshoot");
+          const model = selectedGenerationModel!;
           const sourceUrls = await Promise.all(
             serviceInputs.map((image) => uploadBufferToStorage(image.buffer, image.mime, "source")),
           );
@@ -829,7 +844,7 @@ router.post("/generate/service", requireAuth, upload.array("photos", 10), async 
 
     void (async () => {
       try {
-        const model = await getCategoryModel("photoshoot");
+        const model = selectedGenerationModel!;
         const srcUrls: string[] = [];
         for (const im of serviceInputs) {
           try { srcUrls.push(await uploadBufferToStorage(im.buffer, im.mime, "source")); } catch { /* non-fatal */ }
