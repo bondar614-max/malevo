@@ -15,6 +15,7 @@ import Account from "@/pages/Account";
 import { AuthProvider } from "@/lib/auth";
 import { AuthModalProvider } from "@/components/auth/AuthModal";
 import { SupportWidget } from "@/components/support/SupportWidget";
+import { AnalyticsScripts } from "@/components/AnalyticsScripts";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -61,6 +62,7 @@ function App() {
           <TooltipProvider>
             <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
               <ScrollToTop />
+              <AnalyticsScripts />
               <Router />
               <SupportWidget />
             </WouterRouter>

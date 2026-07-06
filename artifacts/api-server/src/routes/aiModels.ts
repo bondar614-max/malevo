@@ -14,6 +14,25 @@ import { getApiKeyStatus, setApiKey } from "../lib/apiKeys";
 import { DEFAULT_SUPPORT_MODEL, listOpenRouterTextModels } from "../lib/openai";
 
 const router: IRouter = Router();
+const TRACKING_SETTINGS_KEY = "analytics:tracking";
+
+interface TrackingSettings {
+  enabled: boolean;
+  yandexMetrikaId: string;
+  googleAnalyticsId: string;
+  googleTagManagerId: string;
+  headCode: string;
+  bodyCode: string;
+}
+
+const DEFAULT_TRACKING_SETTINGS: TrackingSettings = {
+  enabled: false,
+  yandexMetrikaId: "",
+  googleAnalyticsId: "",
+  googleTagManagerId: "",
+  headCode: "",
+  bodyCode: "",
+};
 
 async function requireAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!req.auth) { res.status(401).json({ error: "Unauthorized" }); return; }
@@ -24,6 +43,69 @@ async function requireAdmin(req: Request, res: Response, next: NextFunction): Pr
 
 router.get("/admin/ai/models", requireAuth, requireAdmin, async (_req, res) => {
   res.json(await listImageModels());
+});
+
+function normalizeTrackingSettings(value: string | undefined): TrackingSettings {
+  if (!value) return DEFAULT_TRACKING_SETTINGS;
+  try {
+    const parsed = JSON.parse(value) as Partial<TrackingSettings>;
+    return {
+      enabled: Boolean(parsed.enabled),
+      yandexMetrikaId: typeof parsed.yandexMetrikaId === "string" ? parsed.yandexMetrikaId : "",
+      googleAnalyticsId: typeof parsed.googleAnalyticsId === "string" ? parsed.googleAnalyticsId : "",
+      googleTagManagerId: typeof parsed.googleTagManagerId === "string" ? parsed.googleTagManagerId : "",
+      headCode: typeof parsed.headCode === "string" ? parsed.headCode : "",
+      bodyCode: typeof parsed.bodyCode === "string" ? parsed.bodyCode : "",
+    };
+  } catch {
+    return DEFAULT_TRACKING_SETTINGS;
+  }
+}
+
+function publicTrackingSettings(settings: TrackingSettings): TrackingSettings {
+  return settings.enabled ? settings : DEFAULT_TRACKING_SETTINGS;
+}
+
+async function getTrackingSettings(): Promise<TrackingSettings> {
+  const [row] = await db
+    .select({ value: appSettingsTable.value })
+    .from(appSettingsTable)
+    .where(eq(appSettingsTable.key, TRACKING_SETTINGS_KEY))
+    .limit(1);
+  return normalizeTrackingSettings(row?.value);
+}
+
+router.get("/analytics/settings", async (_req, res) => {
+  res.json(publicTrackingSettings(await getTrackingSettings()));
+});
+
+router.get("/admin/analytics/settings", requireAuth, requireAdmin, async (_req, res) => {
+  res.json(await getTrackingSettings());
+});
+
+const TrackingSettingsSchema = z.object({
+  enabled: z.boolean(),
+  yandexMetrikaId: z.string().trim().regex(/^\d*$/, "Yandex Metrika ID must contain digits only").max(32),
+  googleAnalyticsId: z.string().trim().regex(/^(G-[A-Z0-9]+|UA-\d+-\d+)?$/i, "Invalid Google Analytics ID").max(32),
+  googleTagManagerId: z.string().trim().regex(/^(GTM-[A-Z0-9]+)?$/i, "Invalid Google Tag Manager ID").max(32),
+  headCode: z.string().max(30000),
+  bodyCode: z.string().max(30000),
+});
+
+router.patch("/admin/analytics/settings", requireAuth, requireAdmin, async (req, res) => {
+  const parsed = TrackingSettingsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid body", details: parsed.error.message });
+    return;
+  }
+  const settings: TrackingSettings = parsed.data;
+  await db
+    .insert(appSettingsTable)
+    .values({ key: TRACKING_SETTINGS_KEY, value: JSON.stringify(settings), updatedAt: new Date() })
+    .onDuplicateKeyUpdate({
+      set: { value: JSON.stringify(settings), updatedAt: new Date() },
+    });
+  res.json(settings);
 });
 
 router.get("/admin/ai/text-models", requireAuth, requireAdmin, async (_req, res) => {

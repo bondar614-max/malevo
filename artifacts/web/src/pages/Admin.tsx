@@ -5,9 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { apiFetch, clearAuth, getStoredUser, getToken } from "@/lib/admin-api";
-import { LogOut, Users, ImageIcon, Tag, Layers, Pencil, Trash2, Plus, X, Shield, Upload, Loader2, Sparkles, MapPin, Cpu, Search, Check, LifeBuoy, Reply } from "lucide-react";
+import { LogOut, Users, ImageIcon, Tag, Layers, Pencil, Trash2, Plus, X, Shield, Upload, Loader2, Sparkles, MapPin, Cpu, Search, Check, LifeBuoy, Reply, BarChart3 } from "lucide-react";
 
-type Tab = "users" | "orders" | "support" | "tariffs" | "styles" | "services" | "locations" | "ai";
+type Tab = "users" | "orders" | "support" | "tariffs" | "styles" | "services" | "locations" | "analytics" | "ai";
 
 interface UserRow {
   id: string; email: string; name: string; role: string; isBlocked: boolean;
@@ -80,6 +80,7 @@ export default function Admin() {
     { id: "styles", label: "Стили", icon: Layers },
     { id: "services", label: "Услуги", icon: Sparkles },
     { id: "locations", label: "Локации", icon: MapPin },
+    { id: "analytics", label: "Метрики", icon: BarChart3 },
     { id: "ai", label: "ИИ-модели", icon: Cpu },
   ];
 
@@ -130,6 +131,7 @@ export default function Admin() {
           {tab === "styles" && <StylesTab />}
           {tab === "services" && <ServicesTab />}
           {tab === "locations" && <LocationsTab />}
+          {tab === "analytics" && <AnalyticsTab />}
           {tab === "ai" && <AiModelsTab />}
         </div>
       </main>
@@ -1336,6 +1338,179 @@ function LocationEditor({ initial, onClose, onSaved }: { initial: LocationRow; o
             {saving ? "..." : "Сохранить"}
           </Button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ===== Analytics Tab =====
+interface TrackingSettings {
+  enabled: boolean;
+  yandexMetrikaId: string;
+  googleAnalyticsId: string;
+  googleTagManagerId: string;
+  headCode: string;
+  bodyCode: string;
+}
+
+const DEFAULT_TRACKING_SETTINGS: TrackingSettings = {
+  enabled: false,
+  yandexMetrikaId: "",
+  googleAnalyticsId: "",
+  googleTagManagerId: "",
+  headCode: "",
+  bodyCode: "",
+};
+
+function AnalyticsTab() {
+  const [settings, setSettings] = useState<TrackingSettings>(DEFAULT_TRACKING_SETTINGS);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setErr("");
+    try {
+      setSettings(await apiFetch<TrackingSettings>("/admin/analytics/settings"));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Ошибка загрузки");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  function upd<K extends keyof TrackingSettings>(key: K, value: TrackingSettings[K]) {
+    setSettings((s) => ({ ...s, [key]: value }));
+  }
+
+  async function save() {
+    setSaving(true);
+    setErr("");
+    setOk(false);
+    try {
+      const updated = await apiFetch<TrackingSettings>("/admin/analytics/settings", {
+        method: "PATCH",
+        body: JSON.stringify(settings),
+      });
+      setSettings(updated);
+      setOk(true);
+      setTimeout(() => setOk(false), 2500);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Ошибка сохранения");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="animate-spin" size={18} /> Загрузка метрик…</div>;
+  }
+
+  return (
+    <div>
+      <div className="mb-6">
+        <h2 className="text-3xl font-bold text-white">Метрики</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          Подключите счетчики посещаемости для публичных страниц сайта. В админке коды не запускаются.
+        </p>
+      </div>
+
+      {err && <div className="text-sm rounded-lg p-3 border text-red-400 bg-red-500/10 border-red-500/30 mb-4">{err}</div>}
+
+      <div className="space-y-5 max-w-3xl">
+        <div className="bg-card border border-border rounded-xl p-5">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={settings.enabled}
+              onChange={(e) => upd("enabled", e.target.checked)}
+              className="mt-1"
+            />
+            <span>
+              <span className="block font-semibold text-white">Включить коды отслеживания</span>
+              <span className="block text-xs text-muted-foreground mt-0.5">
+                Если выключено, сайт вернет пустые настройки и не вставит ни один счетчик.
+              </span>
+            </span>
+          </label>
+        </div>
+
+        <div className="bg-card border border-border rounded-xl p-5">
+          <div className="mb-4">
+            <div className="font-semibold text-white">Быстрое подключение</div>
+            <div className="text-xs text-muted-foreground">Укажите ID счетчика, а сайт сам сформирует стандартный код.</div>
+          </div>
+          <div className="grid md:grid-cols-3 gap-4">
+            <Field label="Яндекс.Метрика ID">
+              <Input
+                value={settings.yandexMetrikaId}
+                onChange={(e) => upd("yandexMetrikaId", e.target.value)}
+                placeholder="12345678"
+                className="bg-secondary border-border text-white"
+              />
+              <div className="mt-1 text-xs text-muted-foreground">Только цифры из номера счетчика.</div>
+            </Field>
+            <Field label="Google Analytics ID">
+              <Input
+                value={settings.googleAnalyticsId}
+                onChange={(e) => upd("googleAnalyticsId", e.target.value)}
+                placeholder="G-XXXXXXXXXX"
+                className="bg-secondary border-border text-white"
+              />
+              <div className="mt-1 text-xs text-muted-foreground">GA4 Measurement ID или старый UA-ID.</div>
+            </Field>
+            <Field label="Google Tag Manager ID">
+              <Input
+                value={settings.googleTagManagerId}
+                onChange={(e) => upd("googleTagManagerId", e.target.value)}
+                placeholder="GTM-XXXXXXX"
+                className="bg-secondary border-border text-white"
+              />
+              <div className="mt-1 text-xs text-muted-foreground">Контейнер GTM, если используете теги через него.</div>
+            </Field>
+          </div>
+        </div>
+
+        <div className="bg-card border border-border rounded-xl p-5">
+          <div className="mb-4">
+            <div className="font-semibold text-white">Дополнительные коды</div>
+            <div className="text-xs text-muted-foreground">
+              Сюда можно вставить готовые snippets других систем аналитики, пиксели рекламы или верификационные теги.
+            </div>
+          </div>
+          <div className="space-y-4">
+            <Field label="Код в head">
+              <Textarea
+                value={settings.headCode}
+                onChange={(e) => upd("headCode", e.target.value)}
+                rows={8}
+                placeholder="<script>...</script>"
+                className="bg-secondary border-border text-white font-mono text-xs"
+              />
+            </Field>
+            <Field label="Код перед закрывающим body">
+              <Textarea
+                value={settings.bodyCode}
+                onChange={(e) => upd("bodyCode", e.target.value)}
+                rows={8}
+                placeholder="<noscript>...</noscript>"
+                className="bg-secondary border-border text-white font-mono text-xs"
+              />
+            </Field>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-6 flex items-center gap-3 max-w-3xl">
+        <Button onClick={save} disabled={saving} className="bg-gradient-primary text-white border-0">
+          {saving ? "..." : "Сохранить"}
+        </Button>
+        {ok && <span className="text-sm text-green-400 flex items-center gap-1"><Check size={16} /> Сохранено</span>}
+        <span className="text-xs text-muted-foreground ml-auto">Коды применяются на публичном сайте после сохранения.</span>
       </div>
     </div>
   );
