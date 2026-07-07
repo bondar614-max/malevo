@@ -139,6 +139,22 @@ CREATE TABLE `app_settings` (
 	CONSTRAINT `app_settings_key` PRIMARY KEY(`key`)
 );
 --> statement-breakpoint
+CREATE TABLE `balance_payments` (
+	`id` varchar(36) NOT NULL,
+	`user_id` varchar(36) NOT NULL,
+	`yookassa_payment_id` varchar(255),
+	`status` varchar(50) NOT NULL DEFAULT 'pending',
+	`amount` decimal(10,2) NOT NULL,
+	`currency` varchar(3) NOT NULL DEFAULT 'RUB',
+	`confirmation_url` text,
+	`description` varchar(255) NOT NULL DEFAULT ('Пополнение баланса'),
+	`credited_at` timestamp,
+	`created_at` timestamp NOT NULL DEFAULT (now()),
+	`updated_at` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `balance_payments_id` PRIMARY KEY(`id`),
+	CONSTRAINT `balance_payments_yookassa_payment_id_unique` UNIQUE(`yookassa_payment_id`)
+);
+--> statement-breakpoint
 CREATE TABLE `support_tickets` (
 	`id` varchar(36) NOT NULL,
 	`user_id` varchar(36) NOT NULL,
@@ -158,4 +174,5 @@ ALTER TABLE `orders` ADD CONSTRAINT `orders_service_key_services_key_fk` FOREIGN
 ALTER TABLE `orders` ADD CONSTRAINT `orders_location_id_locations_id_fk` FOREIGN KEY (`location_id`) REFERENCES `locations`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE `gallery` ADD CONSTRAINT `gallery_style_id_styles_id_fk` FOREIGN KEY (`style_id`) REFERENCES `styles`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE `locations` ADD CONSTRAINT `locations_service_key_services_key_fk` FOREIGN KEY (`service_key`) REFERENCES `services`(`key`) ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE `balance_payments` ADD CONSTRAINT `balance_payments_user_id_users_id_fk` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE `support_tickets` ADD CONSTRAINT `support_tickets_user_id_users_id_fk` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE cascade ON UPDATE no action;

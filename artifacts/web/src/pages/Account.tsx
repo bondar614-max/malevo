@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { useAuth, apiRequest, type AuthUser } from "@/lib/auth";
-import { User as UserIcon, Wallet, ImageIcon, LogOut, Save, KeyRound, Images } from "lucide-react";
+import { User as UserIcon, Wallet, ImageIcon, LogOut, Save, KeyRound, Images, CreditCard, Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PhotoCarousel } from "@/components/PhotoCarousel";
 
@@ -27,6 +27,16 @@ interface OrderRow {
   servicePreview: string | null;
   locationId: string | null;
   locationName: string | null;
+}
+interface BalancePaymentRow {
+  id: string;
+  yookassaPaymentId: string | null;
+  status: string;
+  amount: number;
+  currency: string;
+  confirmationUrl: string | null;
+  createdAt: string;
+  creditedAt: string | null;
 }
 
 type Tab = "profile" | "balance" | "orders";
@@ -209,6 +219,39 @@ function ProfileTab({ user, onUpdated }: { user: AuthUser; onUpdated: (u: AuthUs
 }
 
 function BalanceTab({ user }: { user: AuthUser }) {
+  const { refresh } = useAuth();
+  const [amount, setAmount] = useState("500");
+  const [payments, setPayments] = useState<BalancePaymentRow[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadPayments = useCallback(async () => {
+    try { setPayments(await apiRequest<BalancePaymentRow[]>("/payments")); }
+    catch { setPayments([]); }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+    void loadPayments();
+  }, [loadPayments, refresh]);
+
+  async function topUp(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await apiRequest<{ confirmationUrl: string }>("/payments/top-up", {
+        method: "POST",
+        body: JSON.stringify({ amount: Number(amount) }),
+      });
+      if (!data.confirmationUrl) throw new Error("ЮKassa не вернула ссылку на оплату");
+      window.location.href = data.confirmationUrl;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось создать платеж");
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="grid md:grid-cols-3 gap-4">
       <div className="bg-card border border-border rounded-2xl p-6 md:col-span-2 relative overflow-hidden">
@@ -217,9 +260,24 @@ function BalanceTab({ user }: { user: AuthUser }) {
           <div className="text-sm text-muted-foreground mb-2">Текущий баланс</div>
           <div className="text-5xl font-bold text-white mb-1">{user.balance.toFixed(2)} <span className="text-2xl text-muted-foreground">₽</span></div>
           <div className="text-sm text-muted-foreground">Всего потрачено: <span className="text-white">{user.totalSpent.toFixed(2)} ₽</span></div>
+          <form onSubmit={topUp} className="mt-6 flex flex-col sm:flex-row gap-3 max-w-md">
+            <Input
+              type="number"
+              min={10}
+              step={10}
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className="h-12 bg-secondary border-border text-white"
+            />
+            <Button type="submit" disabled={loading} className="h-12 bg-gradient-primary text-white border-0 shadow-[0_0_20px_rgba(124,58,237,0.4)]">
+              {loading ? <Loader2 size={16} className="mr-2 animate-spin" /> : <CreditCard size={16} className="mr-2" />}
+              Пополнить
+            </Button>
+          </form>
+          {error && <div className="mt-3 text-sm text-red-400">{error}</div>}
           <Link href="/styles">
-            <Button className="mt-6 bg-gradient-primary text-white border-0 shadow-[0_0_20px_rgba(124,58,237,0.4)]">
-              Пополнить и сгенерировать →
+            <Button variant="ghost" className="mt-3 text-white hover:text-white hover:bg-white/10">
+              К генерациям
             </Button>
           </Link>
         </div>
@@ -227,13 +285,54 @@ function BalanceTab({ user }: { user: AuthUser }) {
       <div className="bg-card border border-border rounded-2xl p-6">
         <h4 className="font-bold text-white mb-3">Как это работает?</h4>
         <ul className="text-sm text-muted-foreground space-y-2">
-          <li>• Выбери стиль из каталога</li>
-          <li>• Стоимость одной генерации списывается с баланса</li>
-          <li>• Результат сохраняется в разделе «Мои генерации»</li>
+          <li>• Пополните баланс через ЮKassa</li>
+          <li>• Стоимость генерации списывается при запуске</li>
+          <li>• Если генерация не удалась, сумма вернётся</li>
         </ul>
+      </div>
+      <div className="bg-card border border-border rounded-2xl p-6 md:col-span-3">
+        <h4 className="font-bold text-white mb-4">История пополнений</h4>
+        {!payments ? (
+          <div className="text-sm text-muted-foreground">Загрузка...</div>
+        ) : payments.length === 0 ? (
+          <div className="text-sm text-muted-foreground">Пополнений пока нет</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-muted-foreground">
+                <tr>
+                  <th className="py-2 text-left">Дата</th>
+                  <th className="py-2 text-left">Статус</th>
+                  <th className="py-2 text-right">Сумма</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payments.map((p) => (
+                  <tr key={p.id} className="border-t border-border">
+                    <td className="py-3 text-muted-foreground">{formatDate(p.createdAt)}</td>
+                    <td className="py-3 text-white">{paymentStatusLabel(p.status)}</td>
+                    <td className="py-3 text-right text-white">{p.amount.toFixed(2)} ₽</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
+}
+
+function paymentStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    pending: "Ожидает оплаты",
+    waiting_for_capture: "Подтверждается",
+    succeeded: "Зачислено",
+    canceled: "Отменено",
+    failed: "Ошибка",
+    amount_mismatch: "Проверяется",
+  };
+  return labels[status] ?? status;
 }
 
 function OrdersTab() {

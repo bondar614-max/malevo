@@ -12,6 +12,7 @@ import storageRouter from "./storage";
 import servicesRouter from "./services";
 import aiModelsRouter from "./aiModels";
 import supportRouter from "./support";
+import paymentsRouter from "./payments";
 
 const router: IRouter = Router();
 
@@ -27,6 +28,7 @@ router.use(storageRouter);
 router.use(servicesRouter);
 router.use(aiModelsRouter);
 router.use(supportRouter);
+router.use(paymentsRouter);
 router.use(adminRouter);
 
 export default router;

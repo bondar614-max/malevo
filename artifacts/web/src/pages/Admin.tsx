@@ -5,9 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { apiFetch, clearAuth, getStoredUser, getToken } from "@/lib/admin-api";
-import { LogOut, Users, ImageIcon, Tag, Layers, Pencil, Trash2, Plus, X, Shield, Upload, Loader2, Sparkles, MapPin, Cpu, Search, Check, LifeBuoy, Reply, BarChart3 } from "lucide-react";
+import { LogOut, Users, ImageIcon, Tag, Layers, Pencil, Trash2, Plus, X, Shield, Upload, Loader2, Sparkles, MapPin, Cpu, Search, Check, LifeBuoy, Reply, BarChart3, CreditCard } from "lucide-react";
 
-type Tab = "users" | "orders" | "support" | "tariffs" | "styles" | "services" | "locations" | "analytics" | "ai";
+type Tab = "users" | "orders" | "support" | "payments" | "tariffs" | "styles" | "services" | "locations" | "analytics" | "ai";
 
 interface UserRow {
   id: string; email: string; name: string; role: string; isBlocked: boolean;
@@ -18,6 +18,11 @@ interface OrderRow {
   styleId: string | null; styleTitle: string | null;
   serviceKey: string | null; serviceTitle: string | null; locationName: string | null;
   status: string; amount: number; createdAt: string; completedAt: string | null;
+}
+interface PaymentRow {
+  id: string; userId: string; userEmail: string | null; yookassaPaymentId: string | null;
+  status: string; amount: number; currency: string; confirmationUrl: string | null;
+  createdAt: string; creditedAt: string | null;
 }
 interface SupportMessage {
   role: "user" | "assistant" | "admin";
@@ -76,6 +81,7 @@ export default function Admin() {
     { id: "users", label: "Пользователи", icon: Users },
     { id: "orders", label: "Генерации", icon: ImageIcon },
     { id: "support", label: "Поддержка", icon: LifeBuoy },
+    { id: "payments", label: "Платежи", icon: CreditCard },
     { id: "tariffs", label: "Тарифы", icon: Tag },
     { id: "styles", label: "Стили", icon: Layers },
     { id: "services", label: "Услуги", icon: Sparkles },
@@ -127,6 +133,7 @@ export default function Admin() {
           {tab === "users" && <UsersTab />}
           {tab === "orders" && <OrdersTab />}
           {tab === "support" && <SupportTab />}
+          {tab === "payments" && <PaymentsTab />}
           {tab === "tariffs" && <TariffsTab />}
           {tab === "styles" && <StylesTab />}
           {tab === "services" && <ServicesTab />}
@@ -294,6 +301,172 @@ function OrdersTab() {
             ))}
             {rows && rows.length === 0 && (
               <tr><td colSpan={6} className="px-4 py-12 text-center text-muted-foreground">Пока нет генераций</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ===== Payments Tab =====
+interface YooKassaAdminSettings {
+  enabled: boolean;
+  shopId: string;
+  secretConfigured: boolean;
+  returnUrl: string;
+  webhookToken: string;
+}
+
+function PaymentsTab() {
+  const [rows, setRows] = useState<PaymentRow[] | null>(null);
+  const [settings, setSettings] = useState<YooKassaAdminSettings | null>(null);
+  const [secretKey, setSecretKey] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [ok, setOk] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const [paymentRows, paymentSettings] = await Promise.all([
+        apiFetch<PaymentRow[]>("/admin/payments"),
+        apiFetch<YooKassaAdminSettings>("/admin/payments/yookassa"),
+      ]);
+      setRows(paymentRows);
+      setSettings(paymentSettings);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setRows([]);
+    }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  async function saveSettings() {
+    if (!settings) return;
+    setSaving(true);
+    setError(null);
+    setOk(false);
+    try {
+      const updated = await apiFetch<YooKassaAdminSettings>("/admin/payments/yookassa", {
+        method: "PATCH",
+        body: JSON.stringify({
+          enabled: settings.enabled,
+          shopId: settings.shopId,
+          secretKey,
+          returnUrl: settings.returnUrl,
+          webhookToken: settings.webhookToken,
+        }),
+      });
+      setSettings(updated);
+      setSecretKey("");
+      setOk(true);
+      setTimeout(() => setOk(false), 2500);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка сохранения");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-3xl font-bold text-white">Платежи</h2>
+          <p className="text-sm text-muted-foreground mt-1">Настройки ЮKassa и история пополнений баланса</p>
+        </div>
+        <div className="text-sm text-muted-foreground">Всего: {rows?.length ?? "..."}</div>
+      </div>
+
+      {error && <div className="text-sm rounded-lg p-3 border text-red-400 bg-red-500/10 border-red-500/30 mb-4">{error}</div>}
+
+      {settings && (
+        <div className="bg-card border border-border rounded-2xl p-5 mb-6 max-w-3xl">
+          <div className="flex items-start gap-3 mb-4">
+            <input
+              type="checkbox"
+              checked={settings.enabled}
+              onChange={(e) => setSettings((s) => s ? { ...s, enabled: e.target.checked } : s)}
+              className="mt-1"
+            />
+            <div>
+              <div className="font-semibold text-white">Включить пополнение через ЮKassa</div>
+              <div className="text-xs text-muted-foreground">
+                Webhook URL: <span className="font-mono">/api/payments/yookassa/webhook?token={settings.webhookToken || "TOKEN"}</span>
+              </div>
+            </div>
+          </div>
+          <div className="grid md:grid-cols-2 gap-4">
+            <Field label="Shop ID">
+              <Input
+                value={settings.shopId}
+                onChange={(e) => setSettings((s) => s ? { ...s, shopId: e.target.value } : s)}
+                className="bg-secondary border-border text-white"
+              />
+            </Field>
+            <Field label="Secret key">
+              <Input
+                type="password"
+                value={secretKey}
+                onChange={(e) => setSecretKey(e.target.value)}
+                placeholder={settings.secretConfigured ? "Ключ уже задан" : "Введите ключ"}
+                className="bg-secondary border-border text-white"
+                autoComplete="off"
+              />
+              <div className={`mt-1 text-xs ${settings.secretConfigured ? "text-green-400" : "text-amber-400"}`}>
+                {settings.secretConfigured ? "Ключ сохранён" : "Ключ не задан"}
+              </div>
+            </Field>
+            <Field label="Return URL">
+              <Input
+                value={settings.returnUrl}
+                onChange={(e) => setSettings((s) => s ? { ...s, returnUrl: e.target.value } : s)}
+                placeholder="https://site.ru/account"
+                className="bg-secondary border-border text-white"
+              />
+            </Field>
+            <Field label="Webhook token">
+              <Input
+                value={settings.webhookToken}
+                onChange={(e) => setSettings((s) => s ? { ...s, webhookToken: e.target.value } : s)}
+                className="bg-secondary border-border text-white"
+              />
+            </Field>
+          </div>
+          <div className="mt-5 flex items-center gap-3">
+            <Button onClick={saveSettings} disabled={saving} className="bg-gradient-primary text-white border-0">
+              {saving ? "..." : "Сохранить"}
+            </Button>
+            {ok && <span className="text-sm text-green-400 flex items-center gap-1"><Check size={16} /> Сохранено</span>}
+          </div>
+        </div>
+      )}
+
+      <div className="bg-card border border-border rounded-2xl overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-secondary text-muted-foreground">
+            <tr>
+              <th className="px-4 py-3 text-left">Дата</th>
+              <th className="px-4 py-3 text-left">Пользователь</th>
+              <th className="px-4 py-3 text-left">ЮKassa ID</th>
+              <th className="px-4 py-3 text-left">Статус</th>
+              <th className="px-4 py-3 text-right">Сумма</th>
+              <th className="px-4 py-3 text-left">Зачислено</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows?.map((p) => (
+              <tr key={p.id} className="border-t border-border hover:bg-white/5">
+                <td className="px-4 py-3 text-muted-foreground">{formatDate(p.createdAt)}</td>
+                <td className="px-4 py-3 text-white">{p.userEmail ?? p.userId}</td>
+                <td className="px-4 py-3 text-muted-foreground font-mono text-xs">{p.yookassaPaymentId ?? "—"}</td>
+                <td className="px-4 py-3"><span className="px-2 py-0.5 rounded text-xs bg-secondary">{p.status}</span></td>
+                <td className="px-4 py-3 text-right text-white">{p.amount.toFixed(2)} ₽</td>
+                <td className="px-4 py-3 text-muted-foreground">{formatDate(p.creditedAt)}</td>
+              </tr>
+            ))}
+            {rows && rows.length === 0 && (
+              <tr><td colSpan={6} className="px-4 py-12 text-center text-muted-foreground">Пока нет платежей</td></tr>
             )}
           </tbody>
         </table>
