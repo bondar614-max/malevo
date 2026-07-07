@@ -39,6 +39,29 @@ interface BalancePaymentRow {
   creditedAt: string | null;
 }
 
+interface YooMoneyCheckoutWidgetConfig {
+  confirmation_token: string;
+  return_url: string;
+  customization?: {
+    modal?: boolean;
+    colors?: {
+      control_primary?: string;
+    };
+  };
+  error_callback?: (error: unknown) => void;
+}
+
+interface YooMoneyCheckoutWidgetInstance {
+  render: (containerId?: string) => Promise<void>;
+  destroy?: () => void;
+}
+
+declare global {
+  interface Window {
+    YooMoneyCheckoutWidget?: new (config: YooMoneyCheckoutWidgetConfig) => YooMoneyCheckoutWidgetInstance;
+  }
+}
+
 type Tab = "profile" | "balance" | "orders";
 
 function formatDate(iso: string | null): string {
@@ -240,12 +263,17 @@ function BalanceTab({ user }: { user: AuthUser }) {
     setLoading(true);
     setError(null);
     try {
-      const data = await apiRequest<{ confirmationUrl: string }>("/payments/top-up", {
+      const data = await apiRequest<{ confirmationToken: string; returnUrl: string }>("/payments/top-up", {
         method: "POST",
         body: JSON.stringify({ amount: Number(amount) }),
       });
-      if (!data.confirmationUrl) throw new Error("ЮKassa не вернула ссылку на оплату");
-      window.location.href = data.confirmationUrl;
+      if (!data.confirmationToken) throw new Error("ЮKassa не вернула токен для оплаты");
+      await openYooKassaWidget(data.confirmationToken, data.returnUrl);
+      setLoading(false);
+      setTimeout(() => {
+        void refresh();
+        void loadPayments();
+      }, 1500);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Не удалось создать платеж");
       setLoading(false);
@@ -321,6 +349,55 @@ function BalanceTab({ user }: { user: AuthUser }) {
       </div>
     </div>
   );
+}
+
+let yookassaWidgetScriptPromise: Promise<void> | null = null;
+
+function loadYooKassaWidgetScript(): Promise<void> {
+  if (window.YooMoneyCheckoutWidget) return Promise.resolve();
+  if (yookassaWidgetScriptPromise) return yookassaWidgetScriptPromise;
+
+  yookassaWidgetScriptPromise = new Promise((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>("script[data-yookassa-widget]");
+    if (existing) {
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener("error", () => reject(new Error("Не удалось загрузить виджет ЮKassa")), { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://yookassa.ru/checkout-widget/v1/checkout-widget.js";
+    script.async = true;
+    script.dataset.yookassaWidget = "true";
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Не удалось загрузить виджет ЮKassa"));
+    document.head.appendChild(script);
+  });
+
+  return yookassaWidgetScriptPromise;
+}
+
+async function openYooKassaWidget(confirmationToken: string, returnUrl: string): Promise<void> {
+  await loadYooKassaWidgetScript();
+  if (!window.YooMoneyCheckoutWidget) {
+    throw new Error("Виджет ЮKassa недоступен");
+  }
+
+  const checkout = new window.YooMoneyCheckoutWidget({
+    confirmation_token: confirmationToken,
+    return_url: returnUrl,
+    customization: {
+      modal: true,
+      colors: {
+        control_primary: "#7C3AED",
+      },
+    },
+    error_callback: (widgetError) => {
+      console.error("YooKassa widget error", widgetError);
+    },
+  });
+
+  await checkout.render();
 }
 
 function paymentStatusLabel(status: string): string {

@@ -22,7 +22,7 @@ interface YooKassaPayment {
   status: string;
   paid?: boolean;
   amount?: { value?: string; currency?: string };
-  confirmation?: { confirmation_url?: string };
+  confirmation?: { confirmation_token?: string; confirmation_url?: string };
   metadata?: Record<string, unknown>;
 }
 
@@ -143,12 +143,16 @@ router.post("/payments/top-up", requireAuth, async (req, res) => {
       body: JSON.stringify({
         amount: { value: amount, currency: "RUB" },
         capture: true,
-        confirmation: { type: "redirect", return_url: absoluteReturnUrl(req, settings, paymentId) },
+        confirmation: { type: "embedded", locale: "ru_RU" },
         description,
         metadata: { balancePaymentId: paymentId, userId },
       }),
     });
     const confirmationUrl = payment.confirmation?.confirmation_url ?? "";
+    const confirmationToken = payment.confirmation?.confirmation_token ?? "";
+    if (!confirmationToken) {
+      throw new Error("ЮKassa не вернула токен для платежного виджета");
+    }
     await db
       .update(balancePaymentsTable)
       .set({
@@ -158,7 +162,13 @@ router.post("/payments/top-up", requireAuth, async (req, res) => {
         updatedAt: new Date(),
       })
       .where(eq(balancePaymentsTable.id, paymentId));
-    res.status(201).json({ paymentId, confirmationUrl, status: payment.status });
+    res.status(201).json({
+      paymentId,
+      confirmationToken,
+      confirmationUrl,
+      returnUrl: absoluteReturnUrl(req, settings, paymentId),
+      status: payment.status,
+    });
   } catch (err) {
     await db
       .update(balancePaymentsTable)
