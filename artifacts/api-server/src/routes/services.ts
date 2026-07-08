@@ -7,8 +7,10 @@ import { requireAuth } from "../lib/auth";
 
 const router: IRouter = Router();
 const PHOTO_EXAMPLES_SETTINGS_KEY = "landing:photo_examples";
+const HeroVariantSchema = z.enum(["variant2", "variant3", "variant4"]);
 
 const defaultPhotoExamples = {
+  heroVariant: "variant3" as const,
   photoshoot: [
     {
       src: "/api/static/generated/8c995cee-716a-42b3-81ae-1c4b832006ce.png",
@@ -67,6 +69,7 @@ const ExampleItemSchema = z.object({
 });
 
 const PhotoExamplesSchema = z.object({
+  heroVariant: HeroVariantSchema.default(defaultPhotoExamples.heroVariant),
   photoshoot: z.array(ExampleItemSchema).length(4),
   reviewBefore: ExampleItemSchema.omit({ className: true }),
   reviewAfter: z.array(ExampleItemSchema.omit({ className: true })).length(3),
@@ -79,6 +82,7 @@ function mergePhotoExamples(raw: unknown): PhotoExamplesSettings {
   if (!parsed.success) return defaultPhotoExamples;
   const data = parsed.data;
   return {
+    heroVariant: data.heroVariant ?? defaultPhotoExamples.heroVariant,
     photoshoot: defaultPhotoExamples.photoshoot.map((fallback, index) => ({
       ...fallback,
       ...(data.photoshoot?.[index] ?? {}),

@@ -42,6 +42,7 @@ interface ExampleItem {
 }
 
 interface PhotoExamplesSettings {
+  heroVariant: "variant2" | "variant3" | "variant4";
   photoshoot: ExampleItem[];
   reviewBefore: ExampleItem;
   reviewAfter: ExampleItem[];
@@ -112,6 +113,7 @@ const fallbackServices: ServiceDef[] = [
 ];
 
 const defaultPhotoExamples: PhotoExamplesSettings = {
+  heroVariant: "variant3",
   photoshoot: [
     {
       src: "/api/static/generated/8c995cee-716a-42b3-81ae-1c4b832006ce.png",
@@ -192,50 +194,7 @@ export default function BusinessServices() {
     <div className="min-h-screen bg-background text-foreground selection:bg-[#7C3AED]/30 selection:text-white">
       <Header />
       <main className="overflow-hidden">
-        <section className="relative pt-28 md:pt-36 pb-14 md:pb-20">
-          <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_18%_8%,rgba(124,58,237,0.2),transparent_32%),radial-gradient(circle_at_80%_20%,rgba(16,185,129,0.16),transparent_30%)]" />
-          <div className="container mx-auto px-4 md:px-6 relative">
-            <div className="grid lg:grid-cols-[1.02fr_0.98fr] gap-10 lg:gap-14 items-center">
-              <div>
-                <div className="inline-flex items-center gap-2 bg-white/5 border border-white/10 text-[#67E8F9] px-4 py-1.5 rounded-full text-sm font-medium mb-5">
-                  <Sparkles size={14} /> AI-фото для маркетплейсов
-                </div>
-                <h1 className="text-4xl md:text-6xl font-bold tracking-tight text-white leading-[1.04]">
-                  Фото, которые помогают карточке продавать быстрее
-                </h1>
-                <p className="text-lg md:text-xl text-muted-foreground mt-6 max-w-2xl leading-relaxed">
-                  Две прикладные услуги для продавцов: каталожная WB-фотосессия и реалистичные фото для отзывов. Без студии, модели, логистики и недель ожидания.
-                </p>
-                <div className="grid sm:grid-cols-3 gap-3 mt-8 max-w-2xl">
-                  {[
-                    { icon: Clock3, label: "Результат за минуты" },
-                    { icon: WalletCards, label: "Цена ниже съемки" },
-                    { icon: ShieldCheck, label: "Оплата за генерацию" },
-                  ].map((item) => (
-                    <div key={item.label} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-3 text-sm text-white">
-                      <item.icon size={16} className="text-[#67E8F9] shrink-0" />
-                      <span>{item.label}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex flex-col sm:flex-row gap-3 mt-8">
-                  <Button asChild size="lg" className="h-13 bg-gradient-primary text-white border-0 shadow-[0_0_22px_rgba(124,58,237,0.35)]">
-                    <a href="#choose-service">Выбрать услугу <ArrowRight size={18} className="ml-2" /></a>
-                  </Button>
-                  <Button asChild size="lg" variant="outline" className="h-13 border-white/15 text-white bg-white/[0.02]">
-                    <a href="#how-it-works">Как это работает</a>
-                  </Button>
-                </div>
-              </div>
-
-              <div className="grid gap-4">
-                {normalized.map((service) => (
-                  <HeroServiceCard key={service.key} service={service} />
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
+        <PhotoHero variant={examples.heroVariant} examples={examples} services={normalized} />
 
         <section id="choose-service" className="py-16 md:py-20 border-y border-white/10 bg-white/[0.02]">
           <div className="container mx-auto px-4 md:px-6">
@@ -252,7 +211,7 @@ export default function BusinessServices() {
           </div>
         </section>
 
-        <section className="py-16 md:py-20">
+        <section id="photoshoot-examples" className="py-16 md:py-20 scroll-mt-24">
           <div className="container mx-auto px-4 md:px-6">
             <div className="grid lg:grid-cols-[0.78fr_1.22fr] gap-8 lg:gap-12 items-start">
               <div className="lg:sticky lg:top-28">
@@ -497,6 +456,233 @@ function SectionIntro({ label, title, text }: { label: string; title: string; te
       <div className="text-sm font-semibold text-[#67E8F9] mb-3">{label}</div>
       <h2 className="text-3xl md:text-4xl font-bold text-white tracking-tight">{title}</h2>
       <p className="text-muted-foreground text-lg mt-4 leading-relaxed">{text}</p>
+    </div>
+  );
+}
+
+function PhotoHero({ variant, examples, services }: { variant: PhotoExamplesSettings["heroVariant"]; examples: PhotoExamplesSettings; services: ServiceDef[] }) {
+  if (variant === "variant2") return <PhotoHeroPain examples={examples} services={services} />;
+  if (variant === "variant4") return <PhotoHeroProduct examples={examples} services={services} />;
+  return <PhotoHeroBeforeAfter examples={examples} services={services} />;
+}
+
+function HeroCtas({ primary }: { primary: string }) {
+  return (
+    <div className="flex flex-col sm:flex-row gap-3 mt-8">
+      <Button asChild size="lg" className="h-14 px-7 bg-gradient-to-r from-[#FF3D7F] via-[#A855F7] to-[#22D3EE] text-white border-0 shadow-[0_0_30px_rgba(236,72,153,0.34)]">
+        <Link href="/service/wb-photoshoot">{primary} <ArrowRight size={18} className="ml-2" /></Link>
+      </Button>
+      <Button asChild size="lg" variant="outline" className="h-14 px-7 border-white/15 text-white bg-white/[0.03] hover:bg-white/[0.06]">
+        <a href="#photoshoot-examples">Смотреть примеры</a>
+      </Button>
+    </div>
+  );
+}
+
+function PhotoHeroPain({ examples, services }: { examples: PhotoExamplesSettings; services: ServiceDef[] }) {
+  const wb = services.find((s) => s.key === "wb-photoshoot") ?? fallbackServices[0]!;
+  return (
+    <section className="relative pt-28 md:pt-34 pb-12 md:pb-16 min-h-[860px]">
+      <div className="absolute inset-0 bg-[linear-gradient(90deg,#050506_0%,rgba(5,5,6,0.96)_42%,rgba(5,5,6,0.72)_100%)]" />
+      <div className="container mx-auto px-4 md:px-6 relative">
+        <div className="grid lg:grid-cols-[0.95fr_1.05fr] gap-8 lg:gap-10 items-center">
+          <div>
+            <SourcePanel examples={examples} />
+            <div className="mt-8 inline-flex items-center gap-2 rounded-full border border-[#22D3EE]/30 bg-[#22D3EE]/10 px-4 py-1.5 text-sm font-semibold text-[#67E8F9]">
+              <Sparkles size={15} /> WB + фотоотзывы
+            </div>
+            <h1 className="mt-5 text-4xl md:text-6xl font-bold tracking-tight text-white leading-[1.02]">
+              Карточка без сильных фото <span className="text-[#22D3EE]">теряет продажи</span>
+            </h1>
+            <p className="mt-5 max-w-2xl text-lg md:text-xl leading-relaxed text-muted-foreground">
+              Сделайте WB-фотосессию и фотоотзывы из ваших исходников — быстро, красиво, без студии.
+            </p>
+            <HeroCtas primary="Запустить AI-фото" />
+            <div className="mt-6 flex flex-wrap gap-3 text-sm">
+              {["WB", "Отзывы", `от ${Number(wb.price).toFixed(0)} ₽`, "готово за минуты"].map((chip) => (
+                <span key={chip} className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-white">{chip}</span>
+              ))}
+            </div>
+          </div>
+          <div className="relative">
+            <div className="grid grid-cols-4 gap-3">
+              <HeroImage src={examples.photoshoot[0]?.src} className="col-span-2 row-span-2 aspect-[3/4]" />
+              <HeroImage src={examples.photoshoot[1]?.src} className="col-span-2 aspect-[4/3]" />
+              <HeroImage src={examples.photoshoot[2]?.src} className="aspect-square" />
+              <HeroImage src={examples.photoshoot[3]?.src} className="aspect-square" />
+              <div className="col-span-4 rounded-2xl border border-white/10 bg-card/90 p-4 shadow-2xl">
+                <div className="text-xs text-[#67E8F9] font-semibold mb-3">Фотоотзывы</div>
+                <div className="grid grid-cols-3 gap-2">
+                  {examples.reviewAfter.map((item) => <HeroImage key={item.src} src={item.src} className="aspect-[3/4]" />)}
+                </div>
+                <div className="mt-3 text-sm text-white">4.9 из 5 на основе 2 357 отзывов</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <HeroMetricBand />
+      </div>
+    </section>
+  );
+}
+
+function PhotoHeroBeforeAfter({ examples }: { examples: PhotoExamplesSettings; services: ServiceDef[] }) {
+  return (
+    <section className="relative pt-24 md:pt-28 pb-10 md:pb-14 min-h-[820px] bg-[#050506]">
+      <div className="container mx-auto px-4 md:px-6 relative">
+        <div className="grid lg:grid-cols-[1fr_1.2fr] gap-8 items-center">
+          <div>
+            <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-card min-h-[340px]">
+              <HeroImage src={examples.reviewBefore.src} className="absolute inset-0 h-full w-full opacity-60" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
+              <span className="absolute left-5 top-5 rounded-full bg-black/70 px-3 py-1 text-sm font-semibold text-white">До</span>
+              <div className="absolute bottom-5 left-5 right-5 rounded-2xl border border-white/10 bg-black/50 p-4">
+                <div className="text-sm text-muted-foreground">Слабый исходник</div>
+                <div className="text-white font-semibold">Мало доверия, мало кликов, непонятная посадка</div>
+              </div>
+            </div>
+            <h1 className="mt-8 text-4xl md:text-6xl font-bold tracking-tight text-white leading-[1.04]">
+              Слабые фото? Сделаем карточку <span className="text-[#22D3EE]">заметной.</span>
+            </h1>
+            <p className="mt-5 text-lg text-muted-foreground leading-relaxed">
+              AI-фотосессия и фотоотзывы для маркетплейсов из ваших исходников.
+            </p>
+            <HeroCtas primary="Хочу такие фото" />
+          </div>
+          <div className="grid grid-cols-4 gap-3">
+            <div className="col-span-3 rounded-3xl overflow-hidden border border-[#22D3EE]/30 relative min-h-[430px]">
+              <HeroImage src={examples.photoshoot[0]?.src} className="absolute inset-0 h-full w-full" />
+              <span className="absolute left-5 top-5 rounded-full bg-[#22D3EE] px-4 py-1.5 text-sm font-bold text-black">После</span>
+            </div>
+            <div className="grid gap-3">
+              {examples.photoshoot.slice(1).map((item) => <HeroImage key={item.src} src={item.src} className="aspect-square" />)}
+            </div>
+            <div className="col-span-4 grid grid-cols-[repeat(4,minmax(0,1fr))] gap-3">
+              {examples.reviewAfter.map((item) => <HeroImage key={item.src} src={item.src} className="aspect-[3/4]" />)}
+              <div className="rounded-2xl border border-[#10B981]/30 bg-[#10B981]/10 p-5 flex flex-col justify-center">
+                <div className="text-4xl font-bold text-white">4.9</div>
+                <div className="text-sm text-muted-foreground mt-1">рейтинг доверия</div>
+                <div className="text-[#10B981] mt-3">★★★★★</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <HeroMetricBand />
+      </div>
+    </section>
+  );
+}
+
+function PhotoHeroProduct({ examples, services }: { examples: PhotoExamplesSettings; services: ServiceDef[] }) {
+  const wb = services.find((s) => s.key === "wb-photoshoot") ?? fallbackServices[0]!;
+  return (
+    <section className="relative pt-28 md:pt-34 pb-12 md:pb-16 min-h-[860px] bg-[#050506]">
+      <div className="container mx-auto px-4 md:px-6 relative">
+        <div className="grid xl:grid-cols-[0.82fr_1fr_0.92fr] gap-7 items-center">
+          <WorkflowPanel examples={examples} />
+          <div className="text-center">
+            <div className="inline-flex items-center rounded-full border border-[#10B981]/40 px-4 py-1.5 text-sm font-semibold uppercase tracking-[0.22em] text-[#67E8F9]">
+              Фотосессия для Wildberries
+            </div>
+            <h1 className="mt-7 text-4xl md:text-6xl font-bold tracking-tight text-white leading-[1.05]">
+              Загрузите товар. Получите фото, которые <span className="text-[#10B981]">продают.</span>
+            </h1>
+            <p className="mt-5 text-lg text-muted-foreground leading-relaxed">
+              AI соберет фотосессию для WB: модель, ракурсы, детали ткани и отзывные кадры.
+            </p>
+            <div className="mt-6 flex justify-center flex-wrap gap-3 text-sm">
+              {["без студии", "12+ кадров", `от ${Number(wb.price).toFixed(0)} ₽`].map((chip) => (
+                <span key={chip} className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-white">{chip}</span>
+              ))}
+            </div>
+            <HeroCtas primary="Создать фото сейчас" />
+          </div>
+          <ProductCardPreview examples={examples} />
+        </div>
+        <HeroMetricBand />
+      </div>
+    </section>
+  );
+}
+
+function HeroImage({ src, className }: { src?: string; className: string }) {
+  return (
+    <div className={`relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] ${className}`}>
+      {src && <img src={src} alt="" className="absolute inset-0 h-full w-full object-cover" />}
+    </div>
+  );
+}
+
+function SourcePanel({ examples }: { examples: PhotoExamplesSettings }) {
+  return (
+    <div className="max-w-sm rounded-3xl border border-white/10 bg-card/80 p-4">
+      <div className="text-sm font-semibold text-white mb-3">Ваши исходники</div>
+      <div className="grid grid-cols-5 gap-2">
+        {examples.photoshoot.map((item) => <HeroImage key={item.src} src={item.src} className="aspect-square" />)}
+        <HeroImage src={examples.reviewBefore.src} className="aspect-square" />
+      </div>
+    </div>
+  );
+}
+
+function WorkflowPanel({ examples }: { examples: PhotoExamplesSettings }) {
+  return (
+    <div className="rounded-3xl border border-white/10 bg-card/80 p-5 space-y-5">
+      {[
+        ["1", "Загрузите товар", "5 фото", examples.photoshoot.slice(0, 4)],
+        ["2", "Выберите модель", "2 фото", examples.reviewAfter.slice(0, 2)],
+        ["3", "AI создаст фотосессию", "12+ кадров", examples.photoshoot],
+      ].map(([num, title, meta, imgs]) => (
+        <div key={String(title)} className="border-b border-white/10 last:border-0 pb-5 last:pb-0">
+          <div className="flex items-center justify-between text-sm">
+            <div className="font-semibold text-white"><span className="mr-2 rounded-full bg-[#10B981] px-2 py-0.5 text-black">{String(num)}</span>{String(title)}</div>
+            <span className="text-muted-foreground">{String(meta)}</span>
+          </div>
+          <div className="mt-3 grid grid-cols-4 gap-2">
+            {(imgs as ExampleItem[]).slice(0, 4).map((item) => <HeroImage key={item.src} src={item.src} className="aspect-square" />)}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ProductCardPreview({ examples }: { examples: PhotoExamplesSettings }) {
+  return (
+    <div className="rounded-3xl border border-white/10 bg-card p-4 shadow-2xl">
+      <div className="relative aspect-[4/5] overflow-hidden rounded-2xl">
+        <img src={examples.photoshoot[0]?.src} alt="" className="absolute inset-0 h-full w-full object-cover" />
+        <span className="absolute left-4 top-4 rounded-full bg-[#EC4899] px-3 py-1 text-xs font-bold text-white">ХИТ ПРОДАЖ</span>
+      </div>
+      <div className="mt-4 flex items-end justify-between">
+        <div>
+          <div className="text-2xl font-bold text-white">3 990 ₽</div>
+          <div className="text-sm text-muted-foreground">Куртка женская</div>
+        </div>
+        <div className="text-[#10B981] text-sm">4.9 ★★★★★</div>
+      </div>
+      <div className="mt-4 grid grid-cols-4 gap-2">
+        {examples.reviewAfter.map((item) => <HeroImage key={item.src} src={item.src} className="aspect-square" />)}
+        <div className="rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-sm text-white">+37</div>
+      </div>
+    </div>
+  );
+}
+
+function HeroMetricBand() {
+  return (
+    <div className="mt-10 grid md:grid-cols-4 gap-3 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
+      {[
+        ["12+ фото", "в каждой фотосессии"],
+        ["≈60 сек", "среднее время кадра"],
+        ["+35%", "к росту конверсии"],
+        ["Без рисков", "можно править первый кадр"],
+      ].map(([value, label]) => (
+        <div key={value} className="rounded-2xl bg-black/20 p-4">
+          <div className="text-2xl font-bold text-white">{value}</div>
+          <div className="text-sm text-muted-foreground mt-1">{label}</div>
+        </div>
+      ))}
     </div>
   );
 }

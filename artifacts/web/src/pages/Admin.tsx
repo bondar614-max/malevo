@@ -47,6 +47,7 @@ interface PhotoExampleItem {
   className?: string;
 }
 interface PhotoExamplesSettings {
+  heroVariant: "variant2" | "variant3" | "variant4";
   photoshoot: PhotoExampleItem[];
   reviewBefore: PhotoExampleItem;
   reviewAfter: PhotoExampleItem[];
@@ -1312,6 +1313,12 @@ function ServiceCard({ initial, onSaved }: { initial: ServiceRow; onSaved: () =>
 }
 
 // ===== Landing tab =====
+const HERO_VARIANTS: Array<{ value: PhotoExamplesSettings["heroVariant"]; label: string; desc: string }> = [
+  { value: "variant2", label: "Вариант 2", desc: "Боль продавца: карточка теряет продажи без сильных фото." },
+  { value: "variant3", label: "Вариант 3", desc: "До/после и самый сильный первый крючок." },
+  { value: "variant4", label: "Вариант 4", desc: "Продуктовый сценарий: загрузил товар и получил карточку." },
+];
+
 function LandingTab() {
   const [settings, setSettings] = useState<PhotoExamplesSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1395,6 +1402,36 @@ function LandingTab() {
           {msg.text}
         </div>
       )}
+
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-xl font-bold text-white">Главный экран</h2>
+          <p className="text-sm text-muted-foreground">Выберите, какой из собранных hero-вариантов показывать первым на странице /photo.</p>
+        </div>
+        <div className="grid lg:grid-cols-3 gap-3">
+          {HERO_VARIANTS.map((variant) => {
+            const active = settings.heroVariant === variant.value;
+            return (
+              <button
+                key={variant.value}
+                type="button"
+                onClick={() => setSettings((prev) => (prev ? { ...prev, heroVariant: variant.value } : prev))}
+                className={`rounded-2xl border p-4 text-left transition-colors ${
+                  active
+                    ? "border-primary bg-primary/10 text-white"
+                    : "border-border bg-card text-muted-foreground hover:border-primary/40"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold">{variant.label}</span>
+                  {active && <Check size={16} className="text-primary shrink-0" />}
+                </div>
+                <div className="text-xs leading-relaxed mt-2">{variant.desc}</div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
 
       <section className="space-y-4">
         <div>
