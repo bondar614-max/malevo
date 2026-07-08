@@ -34,6 +34,19 @@ interface ServiceDef {
   badge: string;
 }
 
+interface ExampleItem {
+  src: string;
+  title: string;
+  text: string;
+  className?: string;
+}
+
+interface PhotoExamplesSettings {
+  photoshoot: ExampleItem[];
+  reviewBefore: ExampleItem;
+  reviewAfter: ExampleItem[];
+}
+
 const serviceCopy = {
   "wb-photoshoot": {
     eyebrow: "Для карточек Wildberries",
@@ -98,7 +111,39 @@ const fallbackServices: ServiceDef[] = [
   },
 ];
 
-const fittingRoomExamples = [
+const defaultPhotoExamples: PhotoExamplesSettings = {
+  photoshoot: [
+    {
+      src: "/api/static/generated/8c995cee-716a-42b3-81ae-1c4b832006ce.png",
+      title: "Обложка",
+      text: "Крупный lifestyle-кадр показывает посадку и цвет товара.",
+      className: "sm:col-span-2 lg:col-span-2 lg:row-span-2",
+    },
+    {
+      src: "/api/static/generated/3bf0f84c-6f49-48bf-870d-3b6fe50481b4.jpg",
+      title: "Другой ракурс",
+      text: "Та же модель и куртка, но новая поза и композиция.",
+      className: "",
+    },
+    {
+      src: "/api/static/generated/f8aecf5b-8d2d-4121-bb69-ce7b79225cf3.jpg",
+      title: "Каталожный план",
+      text: "Средний кадр для карточки, описания или рекламы.",
+      className: "",
+    },
+    {
+      src: "/api/static/generated/15258a95-0cce-4f78-9a9f-195cbf544ff8.jpg",
+      title: "Детали ткани",
+      text: "Отдельный кадр помогает показать фактуру, фурнитуру и швы.",
+      className: "sm:col-span-2 lg:col-span-2",
+    },
+  ],
+  reviewBefore: {
+    src: "/review-examples/fitting-room-before.png",
+    title: "Исходник продавца",
+    text: "Обычное фото из кабинки примерочной становится базой для нескольких UGC-вариантов.",
+  },
+  reviewAfter: [
   {
     src: "/review-examples/fitting-room-after-1.png",
     title: "Чище свет",
@@ -114,10 +159,12 @@ const fittingRoomExamples = [
     title: "Живой UGC",
     text: "Сохраняется ощущение смартфон-фото из примерочной.",
   },
-];
+  ],
+};
 
 export default function BusinessServices() {
   const [services, setServices] = useState<ServiceDef[]>(fallbackServices);
+  const [examples, setExamples] = useState<PhotoExamplesSettings>(defaultPhotoExamples);
 
   useEffect(() => {
     fetch("/api/services")
@@ -127,6 +174,13 @@ export default function BusinessServices() {
         if (business.length > 0) setServices(business);
       })
       .catch(() => setServices(fallbackServices));
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/photo-examples")
+      .then((r) => (r.ok ? r.json() : defaultPhotoExamples))
+      .then((d: PhotoExamplesSettings) => setExamples(d))
+      .catch(() => setExamples(defaultPhotoExamples));
   }, []);
 
   const normalized = useMemo(() => {
@@ -200,6 +254,56 @@ export default function BusinessServices() {
 
         <section className="py-16 md:py-20">
           <div className="container mx-auto px-4 md:px-6">
+            <div className="grid lg:grid-cols-[0.78fr_1.22fr] gap-8 lg:gap-12 items-start">
+              <div className="lg:sticky lg:top-28">
+                <SectionIntro
+                  label="Пример WB-фотосессии"
+                  title="Так может выглядеть серия для карточки товара"
+                  text="Взяли последнюю тестовую фотосессию: нейросеть сохраняет модель, товар и общую сцену, но делает разные кадры для обложки, каталога, описания и демонстрации деталей."
+                />
+                <div className="grid grid-cols-2 gap-3 mt-7">
+                  {[
+                    ["12", "кадров в серии"],
+                    ["2", "фото модели"],
+                    ["5", "фото товара"],
+                    ["WB", "формат карточки"],
+                  ].map(([value, label]) => (
+                    <div key={label} className="rounded-2xl border border-white/10 bg-card p-4">
+                      <div className="text-2xl font-bold text-white">{value}</div>
+                      <div className="text-xs uppercase tracking-wider text-muted-foreground mt-1">{label}</div>
+                    </div>
+                  ))}
+                </div>
+                <Button asChild size="lg" className="h-13 mt-7 bg-gradient-primary text-white border-0">
+                  <Link href="/service/wb-photoshoot">Заказать такую фотосессию <ArrowRight size={18} className="ml-2" /></Link>
+                </Button>
+              </div>
+
+              <div className="grid sm:grid-cols-2 lg:grid-cols-4 auto-rows-[260px] md:auto-rows-[320px] gap-4">
+                {examples.photoshoot.map((example) => (
+                  <article key={example.src} className={`group relative overflow-hidden rounded-3xl border border-white/10 bg-card ${example.className}`}>
+                    <img
+                      src={example.src}
+                      alt={`${example.title}: пример сгенерированной WB-фотосессии`}
+                      className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                      loading="lazy"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/82 via-black/20 to-transparent" />
+                    <div className="absolute left-4 right-4 bottom-4">
+                      <div className="inline-flex rounded-full bg-[#7C3AED]/90 px-3 py-1 text-xs font-semibold text-white mb-3">
+                        {example.title}
+                      </div>
+                      <p className="text-sm text-white/88 leading-relaxed">{example.text}</p>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="py-16 md:py-20">
+          <div className="container mx-auto px-4 md:px-6">
             <div className="grid lg:grid-cols-[0.82fr_1.18fr] gap-8 lg:gap-12 items-start">
               <div className="lg:sticky lg:top-28">
                 <SectionIntro
@@ -210,7 +314,7 @@ export default function BusinessServices() {
                 <div className="mt-7 rounded-3xl border border-white/10 bg-card overflow-hidden">
                   <div className="relative aspect-[3/4] bg-white/[0.03]">
                     <img
-                      src="/review-examples/fitting-room-before.png"
+                      src={examples.reviewBefore.src}
                       alt="Исходное фото в примерочной до генерации"
                       className="absolute inset-0 h-full w-full object-cover"
                     />
@@ -219,16 +323,16 @@ export default function BusinessServices() {
                     </div>
                   </div>
                   <div className="p-5">
-                    <h3 className="font-semibold text-white">Исходник продавца</h3>
+                    <h3 className="font-semibold text-white">{examples.reviewBefore.title}</h3>
                     <p className="text-sm text-muted-foreground leading-relaxed mt-2">
-                      Обычное фото из кабинки примерочной становится базой для нескольких UGC-вариантов.
+                      {examples.reviewBefore.text}
                     </p>
                   </div>
                 </div>
               </div>
 
               <div className="grid sm:grid-cols-3 gap-4">
-                {fittingRoomExamples.map((example, index) => (
+                {examples.reviewAfter.map((example, index) => (
                   <article key={example.src} className="rounded-3xl border border-white/10 bg-card overflow-hidden">
                     <div className="relative aspect-[3/4] bg-white/[0.03]">
                       <img

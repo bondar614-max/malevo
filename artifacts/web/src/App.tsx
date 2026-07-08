@@ -49,7 +49,8 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={Home} />
-      <Route path="/business-services" component={BusinessServices} />
+      <Route path="/photo" component={BusinessServices} />
+      <Route path="/business-services" component={LegacyBusinessServicesRedirect} />
       <Route path="/styles" component={Styles} />
       <Route path="/generate/:id" component={Generate} />
       <Route path="/service/:key" component={Service} />
@@ -59,6 +60,16 @@ function Router() {
       <Route component={NotFound} />
     </Switch>
   );
+}
+
+function LegacyBusinessServicesRedirect() {
+  const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    setLocation("/photo", { replace: true });
+  }, [setLocation]);
+
+  return null;
 }
 
 function App() {

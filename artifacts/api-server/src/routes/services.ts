@@ -1,11 +1,123 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { randomUUID } from "node:crypto";
-import { db, servicesTable, locationsTable, usersTable } from "@workspace/db";
+import { db, servicesTable, locationsTable, usersTable, appSettingsTable } from "@workspace/db";
 import { eq, asc, and } from "drizzle-orm";
 import { z } from "zod";
 import { requireAuth } from "../lib/auth";
 
 const router: IRouter = Router();
+const PHOTO_EXAMPLES_SETTINGS_KEY = "landing:photo_examples";
+
+const defaultPhotoExamples = {
+  photoshoot: [
+    {
+      src: "/api/static/generated/8c995cee-716a-42b3-81ae-1c4b832006ce.png",
+      title: "Обложка",
+      text: "Крупный lifestyle-кадр показывает посадку и цвет товара.",
+      className: "sm:col-span-2 lg:col-span-2 lg:row-span-2",
+    },
+    {
+      src: "/api/static/generated/3bf0f84c-6f49-48bf-870d-3b6fe50481b4.jpg",
+      title: "Другой ракурс",
+      text: "Та же модель и куртка, но новая поза и композиция.",
+      className: "",
+    },
+    {
+      src: "/api/static/generated/f8aecf5b-8d2d-4121-bb69-ce7b79225cf3.jpg",
+      title: "Каталожный план",
+      text: "Средний кадр для карточки, описания или рекламы.",
+      className: "",
+    },
+    {
+      src: "/api/static/generated/15258a95-0cce-4f78-9a9f-195cbf544ff8.jpg",
+      title: "Детали ткани",
+      text: "Отдельный кадр помогает показать фактуру, фурнитуру и швы.",
+      className: "sm:col-span-2 lg:col-span-2",
+    },
+  ],
+  reviewBefore: {
+    src: "/review-examples/fitting-room-before.png",
+    title: "Исходник продавца",
+    text: "Обычное фото из кабинки примерочной становится базой для нескольких UGC-вариантов.",
+  },
+  reviewAfter: [
+    {
+      src: "/review-examples/fitting-room-after-1.png",
+      title: "Чище свет",
+      text: "Кадр выглядит как обычный отзыв, но товар легче рассмотреть.",
+    },
+    {
+      src: "/review-examples/fitting-room-after-2.png",
+      title: "Новая поза",
+      text: "Можно получить другой ракурс без повторной съемки.",
+    },
+    {
+      src: "/review-examples/fitting-room-after-3.png",
+      title: "Живой UGC",
+      text: "Сохраняется ощущение смартфон-фото из примерочной.",
+    },
+  ],
+};
+
+const ExampleItemSchema = z.object({
+  src: z.string().trim().min(1).max(1000),
+  title: z.string().trim().min(1).max(120),
+  text: z.string().trim().min(1).max(500),
+  className: z.string().max(200).optional(),
+});
+
+const PhotoExamplesSchema = z.object({
+  photoshoot: z.array(ExampleItemSchema).length(4),
+  reviewBefore: ExampleItemSchema.omit({ className: true }),
+  reviewAfter: z.array(ExampleItemSchema.omit({ className: true })).length(3),
+});
+
+type PhotoExamplesSettings = z.infer<typeof PhotoExamplesSchema>;
+
+function mergePhotoExamples(raw: unknown): PhotoExamplesSettings {
+  const parsed = PhotoExamplesSchema.partial().safeParse(raw);
+  if (!parsed.success) return defaultPhotoExamples;
+  const data = parsed.data;
+  return {
+    photoshoot: defaultPhotoExamples.photoshoot.map((fallback, index) => ({
+      ...fallback,
+      ...(data.photoshoot?.[index] ?? {}),
+      className: fallback.className,
+    })),
+    reviewBefore: { ...defaultPhotoExamples.reviewBefore, ...(data.reviewBefore ?? {}) },
+    reviewAfter: defaultPhotoExamples.reviewAfter.map((fallback, index) => ({
+      ...fallback,
+      ...(data.reviewAfter?.[index] ?? {}),
+    })),
+  };
+}
+
+async function getPhotoExamples(): Promise<PhotoExamplesSettings> {
+  const [row] = await db
+    .select({ value: appSettingsTable.value })
+    .from(appSettingsTable)
+    .where(eq(appSettingsTable.key, PHOTO_EXAMPLES_SETTINGS_KEY))
+    .limit(1);
+  if (!row?.value) return defaultPhotoExamples;
+  try {
+    return mergePhotoExamples(JSON.parse(row.value));
+  } catch {
+    return defaultPhotoExamples;
+  }
+}
+
+async function setPhotoExamples(settings: PhotoExamplesSettings): Promise<void> {
+  await db
+    .insert(appSettingsTable)
+    .values({
+      key: PHOTO_EXAMPLES_SETTINGS_KEY,
+      value: JSON.stringify(settings),
+      updatedAt: new Date(),
+    })
+    .onDuplicateKeyUpdate({
+      set: { value: JSON.stringify(settings), updatedAt: new Date() },
+    });
+}
 
 function serializeService(s: typeof servicesTable.$inferSelect) {
   return {
@@ -62,6 +174,10 @@ router.get("/services/:key/locations", async (req, res) => {
   res.json(rows.map(serializeLocation));
 });
 
+router.get("/photo-examples", async (_req, res) => {
+  res.json(await getPhotoExamples());
+});
+
 // ===== Admin =====
 async function requireAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!req.auth) { res.status(401).json({ error: "Unauthorized" }); return; }
@@ -73,6 +189,21 @@ async function requireAdmin(req: Request, res: Response, next: NextFunction): Pr
 router.get("/admin/services", requireAuth, requireAdmin, async (_req, res) => {
   const rows = await db.select().from(servicesTable).orderBy(asc(servicesTable.sortOrder));
   res.json(rows.map((r) => ({ ...serializeService(r), prompt: r.prompt })));
+});
+
+router.get("/admin/photo-examples", requireAuth, requireAdmin, async (_req, res) => {
+  res.json(await getPhotoExamples());
+});
+
+router.patch("/admin/photo-examples", requireAuth, requireAdmin, async (req, res) => {
+  const parsed = PhotoExamplesSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid input", details: parsed.error.message });
+    return;
+  }
+  const settings = mergePhotoExamples(parsed.data);
+  await setPhotoExamples(settings);
+  res.json(settings);
 });
 
 const ServiceUpdateSchema = z.object({

@@ -14,10 +14,10 @@ export default function Home() {
       <main>
         <Hero />
         <HowItWorks />
-        <ServicesBlock />
         <StylesGrid />
         <Gallery />
         <Reviews />
+        <ServicesBlock />
       </main>
       <Footer />
     </div>

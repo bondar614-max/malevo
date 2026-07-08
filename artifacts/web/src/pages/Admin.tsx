@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { apiFetch, clearAuth, getStoredUser, getToken } from "@/lib/admin-api";
 import { LogOut, Users, ImageIcon, Tag, Layers, Pencil, Trash2, Plus, X, Shield, Upload, Loader2, Sparkles, MapPin, Cpu, Search, Check, LifeBuoy, Reply, BarChart3, CreditCard } from "lucide-react";
 
-type Tab = "users" | "orders" | "support" | "payments" | "tariffs" | "styles" | "services" | "locations" | "analytics" | "ai";
+type Tab = "users" | "orders" | "support" | "payments" | "tariffs" | "styles" | "services" | "locations" | "landing" | "analytics" | "ai";
 
 interface UserRow {
   id: string; email: string; name: string; role: string; isBlocked: boolean;
@@ -39,6 +39,17 @@ interface ServiceRow {
   prompt: string; previewImageUrl: string; price: number;
   photosMin: number; photosMax: number; generationTime: number;
   isActive: boolean; accentFrom: string; accentTo: string; badge: string;
+}
+interface PhotoExampleItem {
+  src: string;
+  title: string;
+  text: string;
+  className?: string;
+}
+interface PhotoExamplesSettings {
+  photoshoot: PhotoExampleItem[];
+  reviewBefore: PhotoExampleItem;
+  reviewAfter: PhotoExampleItem[];
 }
 interface LocationRow {
   id: string; serviceKey: string; name: string; previewImageUrl: string;
@@ -86,6 +97,7 @@ export default function Admin() {
     { id: "styles", label: "Стили", icon: Layers },
     { id: "services", label: "Услуги", icon: Sparkles },
     { id: "locations", label: "Локации", icon: MapPin },
+    { id: "landing", label: "Лендинг", icon: ImageIcon },
     { id: "analytics", label: "Метрики", icon: BarChart3 },
     { id: "ai", label: "ИИ-модели", icon: Cpu },
   ];
@@ -138,6 +150,7 @@ export default function Admin() {
           {tab === "styles" && <StylesTab />}
           {tab === "services" && <ServicesTab />}
           {tab === "locations" && <LocationsTab />}
+          {tab === "landing" && <LandingTab />}
           {tab === "analytics" && <AnalyticsTab />}
           {tab === "ai" && <AiModelsTab />}
         </div>
@@ -1294,6 +1307,160 @@ function ServiceCard({ initial, onSaved }: { initial: ServiceRow; onSaved: () =>
       <Button onClick={save} disabled={saving} className="bg-gradient-primary text-white border-0">
         {saving ? "Сохранение..." : "Сохранить"}
       </Button>
+    </div>
+  );
+}
+
+// ===== Landing tab =====
+function LandingTab() {
+  const [settings, setSettings] = useState<PhotoExamplesSettings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setMsg(null);
+    try {
+      setSettings(await apiFetch<PhotoExamplesSettings>("/admin/photo-examples"));
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  function updatePhotoshoot(index: number, next: PhotoExampleItem) {
+    setSettings((prev) => {
+      if (!prev) return prev;
+      const photoshoot = prev.photoshoot.slice();
+      photoshoot[index] = { ...photoshoot[index], ...next };
+      return { ...prev, photoshoot };
+    });
+  }
+
+  function updateReviewAfter(index: number, next: PhotoExampleItem) {
+    setSettings((prev) => {
+      if (!prev) return prev;
+      const reviewAfter = prev.reviewAfter.slice();
+      reviewAfter[index] = { ...reviewAfter[index], ...next };
+      return { ...prev, reviewAfter };
+    });
+  }
+
+  async function save() {
+    if (!settings) return;
+    setSaving(true);
+    setMsg(null);
+    try {
+      const updated = await apiFetch<PhotoExamplesSettings>("/admin/photo-examples", {
+        method: "PATCH",
+        body: JSON.stringify(settings),
+      });
+      setSettings(updated);
+      setMsg({ kind: "ok", text: "Сохранено" });
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) return <div className="text-muted-foreground">Загрузка...</div>;
+  if (!settings) {
+    return (
+      <div className="space-y-4">
+        {msg && <div className="text-sm rounded-lg p-3 border text-red-400 bg-red-500/10 border-red-500/30">{msg.text}</div>}
+        <Button onClick={() => void load()} variant="outline" className="border-border text-white">Повторить</Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Лендинг /photo</h1>
+          <p className="text-sm text-muted-foreground">Заменяйте изображения и подписи в блоках примеров WB-фотосессии и фотоотзывов.</p>
+        </div>
+        <Button onClick={save} disabled={saving} className="bg-gradient-primary text-white border-0">
+          {saving ? "Сохранение..." : "Сохранить"}
+        </Button>
+      </div>
+
+      {msg && (
+        <div className={`text-sm rounded-lg p-3 border ${msg.kind === "ok" ? "text-green-400 bg-green-500/10 border-green-500/30" : "text-red-400 bg-red-500/10 border-red-500/30"}`}>
+          {msg.text}
+        </div>
+      )}
+
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-xl font-bold text-white">Пример WB-фотосессии</h2>
+          <p className="text-sm text-muted-foreground">Эти 4 изображения показываются в новом блоке с примером фотосессии.</p>
+        </div>
+        <div className="grid lg:grid-cols-2 gap-4">
+          {settings.photoshoot.map((item, index) => (
+            <ExampleEditor
+              key={`photoshoot-${index}`}
+              label={`Кадр ${index + 1}`}
+              item={item}
+              onChange={(next) => updatePhotoshoot(index, next)}
+            />
+          ))}
+        </div>
+      </section>
+
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-xl font-bold text-white">Пример фотоотзывов</h2>
+          <p className="text-sm text-muted-foreground">Исходное фото и 3 результата “После” в блоке фотоотзывов.</p>
+        </div>
+        <div className="grid lg:grid-cols-2 gap-4">
+          <ExampleEditor
+            label="Фото До"
+            item={settings.reviewBefore}
+            onChange={(next) => setSettings((prev) => (prev ? { ...prev, reviewBefore: { ...prev.reviewBefore, ...next } } : prev))}
+          />
+          {settings.reviewAfter.map((item, index) => (
+            <ExampleEditor
+              key={`review-after-${index}`}
+              label={`Фото После ${index + 1}`}
+              item={item}
+              onChange={(next) => updateReviewAfter(index, next)}
+            />
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ExampleEditor({ label, item, onChange }: { label: string; item: PhotoExampleItem; onChange: (next: PhotoExampleItem) => void }) {
+  return (
+    <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="font-semibold text-white">{label}</h3>
+        {item.className && <span className="text-[10px] uppercase tracking-wider text-muted-foreground">крупный кадр</span>}
+      </div>
+      <PreviewUploader value={item.src} onChange={(src) => onChange({ ...item, src })} />
+      <Field label="Заголовок">
+        <Input
+          value={item.title}
+          onChange={(e) => onChange({ ...item, title: e.target.value })}
+          className="bg-secondary border-border text-white"
+        />
+      </Field>
+      <Field label="Подпись">
+        <Textarea
+          value={item.text}
+          onChange={(e) => onChange({ ...item, text: e.target.value })}
+          rows={3}
+          className="bg-secondary border-border text-white"
+        />
+      </Field>
     </div>
   );
 }
