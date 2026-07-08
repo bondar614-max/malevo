@@ -33,6 +33,16 @@ function zipSafeName(value: string): string {
   return normalized || "photos";
 }
 
+function zipAsciiName(value: string): string {
+  const normalized = value
+    .trim()
+    .replace(/[^\w.-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
+  return normalized || "photos";
+}
+
 function extensionFromContentType(contentType: string): string {
   switch (contentType.split(";")[0]?.trim()) {
     case "image/jpeg": return "jpg";
@@ -284,10 +294,11 @@ router.get("/auth/me/orders/:orderId/photos.zip", requireAuth, async (req, res) 
     const files = await Promise.all(photos.map(downloadResultPhoto));
     const baseName = zipSafeName(order.serviceTitle ?? order.styleTitle ?? "generation");
     const archiveName = `${baseName}-${order.id.slice(0, 8)}.zip`;
+    const asciiArchiveName = `${zipAsciiName(order.serviceTitle ?? order.styleTitle ?? "generation")}-${order.id.slice(0, 8)}.zip`;
     const archive = new ZipArchive({ zlib: { level: 9 } });
 
     res.setHeader("Content-Type", "application/zip");
-    res.setHeader("Content-Disposition", `attachment; filename="${archiveName}"; filename*=UTF-8''${encodeURIComponent(archiveName)}`);
+    res.setHeader("Content-Disposition", `attachment; filename="${asciiArchiveName}"; filename*=UTF-8''${encodeURIComponent(archiveName)}`);
 
     archive.on("error", (err: ArchiverError) => {
       req.log.error({ err, orderId: order.id }, "failed to create order photos zip");

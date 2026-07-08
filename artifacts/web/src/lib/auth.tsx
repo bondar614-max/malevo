@@ -108,7 +108,7 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
 
 function filenameFromDisposition(disposition: string | null): string | null {
   if (!disposition) return null;
-  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  const encoded = disposition.match(/filename\*=UTF-8''"?([^";]+)"?/i)?.[1];
   if (encoded) {
     try { return decodeURIComponent(encoded); } catch { return encoded; }
   }
@@ -138,5 +138,5 @@ export async function apiDownload(path: string, fallbackFilename: string): Promi
   document.body.appendChild(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
