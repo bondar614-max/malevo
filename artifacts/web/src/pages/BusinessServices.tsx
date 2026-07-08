@@ -515,6 +515,7 @@ function PhotoHeroPremium({ examples, services }: { examples: PhotoExamplesSetti
               <span className="text-[#10B981]">★★★★★</span>
               <span className="text-white">4.9</span>
             </div>
+            <ReadyBadge className="mt-5 max-w-xl" />
           </div>
           <div className="grid grid-cols-5 gap-3">
             <HeroImage src={examples.photoshoot[0]?.src} className="col-span-3 row-span-2 aspect-[3/4]" />
@@ -523,13 +524,6 @@ function PhotoHeroPremium({ examples, services }: { examples: PhotoExamplesSetti
             <HeroImage src={examples.photoshoot[3]?.src} className="aspect-square" />
             <HeroImage src={examples.reviewAfter[0]?.src} className="aspect-square" />
             <HeroImage src={examples.reviewAfter[1]?.src} className="aspect-square" />
-            <div className="col-span-5 rounded-2xl border border-[#10B981]/30 bg-[#10B981]/10 p-4 flex items-center gap-3">
-              <CheckCircle2 size={22} className="text-[#10B981] shrink-0" />
-              <div>
-                <div className="font-semibold text-white">Готово за 15-30 минут</div>
-                <div className="text-sm text-muted-foreground">Без фотостудии и повторных съемок</div>
-              </div>
-            </div>
           </div>
         </div>
         <div className="mt-10 rounded-3xl border border-white/10 bg-white/[0.02] p-6 md:p-8">
@@ -675,6 +669,18 @@ function HeroImage({ src, className }: { src?: string; className: string }) {
   return (
     <div className={`relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] ${className}`}>
       {src && <img src={src} alt="" className="absolute inset-0 h-full w-full object-cover" />}
+    </div>
+  );
+}
+
+function ReadyBadge({ className = "" }: { className?: string }) {
+  return (
+    <div className={`rounded-2xl border border-[#10B981]/30 bg-[#10B981]/10 px-5 py-4 flex items-center gap-3 ${className}`}>
+      <CheckCircle2 size={22} className="text-[#10B981] shrink-0" />
+      <div>
+        <div className="font-semibold text-white">Готово за 15-30 минут</div>
+        <div className="text-sm text-muted-foreground">Без фотостудии и повторных съемок</div>
+      </div>
     </div>
   );
 }
