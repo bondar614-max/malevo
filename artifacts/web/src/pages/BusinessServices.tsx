@@ -42,7 +42,7 @@ interface ExampleItem {
 }
 
 interface PhotoExamplesSettings {
-  heroVariant: "variant2" | "variant3" | "variant4";
+  heroVariant: "variant1" | "variant2" | "variant3" | "variant4";
   photoshoot: ExampleItem[];
   reviewBefore: ExampleItem;
   reviewAfter: ExampleItem[];
@@ -461,6 +461,7 @@ function SectionIntro({ label, title, text }: { label: string; title: string; te
 }
 
 function PhotoHero({ variant, examples, services }: { variant: PhotoExamplesSettings["heroVariant"]; examples: PhotoExamplesSettings; services: ServiceDef[] }) {
+  if (variant === "variant1") return <PhotoHeroPremium examples={examples} services={services} />;
   if (variant === "variant2") return <PhotoHeroPain examples={examples} services={services} />;
   if (variant === "variant4") return <PhotoHeroProduct examples={examples} services={services} />;
   return <PhotoHeroBeforeAfter examples={examples} services={services} />;
@@ -476,6 +477,71 @@ function HeroCtas({ primary }: { primary: string }) {
         <a href="#photoshoot-examples">Смотреть примеры</a>
       </Button>
     </div>
+  );
+}
+
+function PhotoHeroPremium({ examples, services }: { examples: PhotoExamplesSettings; services: ServiceDef[] }) {
+  const wb = services.find((s) => s.key === "wb-photoshoot") ?? fallbackServices[0]!;
+  return (
+    <section className="relative pt-28 md:pt-34 pb-12 md:pb-16 min-h-[850px] bg-[#050506]">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_76%_25%,rgba(34,211,238,0.12),transparent_30%),radial-gradient(circle_at_18%_45%,rgba(236,72,153,0.12),transparent_28%)]" />
+      <div className="container mx-auto px-4 md:px-6 relative">
+        <div className="grid lg:grid-cols-[0.82fr_1.18fr] gap-9 lg:gap-12 items-center">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-[#A855F7]/40 bg-[#A855F7]/10 px-4 py-1.5 text-sm font-semibold text-[#C084FC]">
+              <Zap size={15} /> AI-фотосессии для маркетплейсов
+            </div>
+            <h1 className="mt-6 text-5xl md:text-7xl font-bold tracking-tight text-white leading-[0.98]">
+              Фото для <span className="bg-gradient-to-r from-[#EC4899] to-[#38BDF8] bg-clip-text text-transparent">Wildberries</span> за минуты
+            </h1>
+            <p className="mt-6 max-w-2xl text-lg md:text-xl leading-relaxed text-muted-foreground">
+              Загрузите товар — получите серию кадров для карточки, отзывов и рекламы.
+            </p>
+            <HeroCtas primary="Создать фотосессию" />
+            <div className="mt-7 grid sm:grid-cols-3 gap-3 max-w-2xl">
+              {[
+                ["12 кадров", "в серии"],
+                ["без студии", "и лишних затрат"],
+                [`от ${Number(wb.price).toFixed(0)} ₽`, "за фотосессию"],
+              ].map(([value, label]) => (
+                <div key={value} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                  <div className="text-lg font-bold text-white">{value}</div>
+                  <div className="text-sm text-muted-foreground">{label}</div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-7 flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
+              <span>2 847 продавцов уже создают фото с MALEVO</span>
+              <span className="text-[#10B981]">★★★★★</span>
+              <span className="text-white">4.9</span>
+            </div>
+          </div>
+          <div className="grid grid-cols-5 gap-3">
+            <HeroImage src={examples.photoshoot[0]?.src} className="col-span-3 row-span-2 aspect-[3/4]" />
+            <HeroImage src={examples.photoshoot[1]?.src} className="col-span-2 aspect-[4/3]" />
+            <HeroImage src={examples.photoshoot[2]?.src} className="col-span-2 aspect-[4/3]" />
+            <HeroImage src={examples.photoshoot[3]?.src} className="col-span-2 row-span-2 aspect-[3/4]" />
+            <HeroImage src={examples.reviewAfter[0]?.src} className="aspect-square" />
+            <HeroImage src={examples.reviewAfter[1]?.src} className="aspect-square" />
+            <div className="col-span-3 rounded-2xl border border-[#10B981]/30 bg-[#10B981]/10 p-4 flex items-center gap-3">
+              <CheckCircle2 size={22} className="text-[#10B981] shrink-0" />
+              <div>
+                <div className="font-semibold text-white">Готово за 15-30 минут</div>
+                <div className="text-sm text-muted-foreground">Без фотостудии и повторных съемок</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="mt-10 rounded-3xl border border-white/10 bg-white/[0.02] p-6 md:p-8">
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-3xl md:text-4xl font-bold text-white">Как это <span className="text-[#A855F7]">работает</span></h2>
+            <Button asChild variant="outline" className="hidden sm:inline-flex border-white/15 text-white">
+              <a href="#how-it-works">Весь процесс в 4 шага <ArrowRight size={16} className="ml-2" /></a>
+            </Button>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 

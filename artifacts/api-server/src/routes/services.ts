@@ -7,7 +7,7 @@ import { requireAuth } from "../lib/auth";
 
 const router: IRouter = Router();
 const PHOTO_EXAMPLES_SETTINGS_KEY = "landing:photo_examples";
-const HeroVariantSchema = z.enum(["variant2", "variant3", "variant4"]);
+const HeroVariantSchema = z.enum(["variant1", "variant2", "variant3", "variant4"]);
 
 const defaultPhotoExamples = {
   heroVariant: "variant3" as const,

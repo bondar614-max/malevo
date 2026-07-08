@@ -47,7 +47,7 @@ interface PhotoExampleItem {
   className?: string;
 }
 interface PhotoExamplesSettings {
-  heroVariant: "variant2" | "variant3" | "variant4";
+  heroVariant: "variant1" | "variant2" | "variant3" | "variant4";
   photoshoot: PhotoExampleItem[];
   reviewBefore: PhotoExampleItem;
   reviewAfter: PhotoExampleItem[];
@@ -1314,6 +1314,7 @@ function ServiceCard({ initial, onSaved }: { initial: ServiceRow; onSaved: () =>
 
 // ===== Landing tab =====
 const HERO_VARIANTS: Array<{ value: PhotoExamplesSettings["heroVariant"]; label: string; desc: string }> = [
+  { value: "variant1", label: "Вариант 1", desc: "Премиальная витрина: чистый оффер и крупная фотосерия справа." },
   { value: "variant2", label: "Вариант 2", desc: "Боль продавца: карточка теряет продажи без сильных фото." },
   { value: "variant3", label: "Вариант 3", desc: "До/после и самый сильный первый крючок." },
   { value: "variant4", label: "Вариант 4", desc: "Продуктовый сценарий: загрузил товар и получил карточку." },
