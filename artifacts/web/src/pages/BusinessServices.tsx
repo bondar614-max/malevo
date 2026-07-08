@@ -520,10 +520,10 @@ function PhotoHeroPremium({ examples, services }: { examples: PhotoExamplesSetti
             <HeroImage src={examples.photoshoot[0]?.src} className="col-span-3 row-span-2 aspect-[3/4]" />
             <HeroImage src={examples.photoshoot[1]?.src} className="col-span-2 aspect-[4/3]" />
             <HeroImage src={examples.photoshoot[2]?.src} className="col-span-2 aspect-[4/3]" />
-            <HeroImage src={examples.photoshoot[3]?.src} className="col-span-2 row-span-2 aspect-[3/4]" />
+            <HeroImage src={examples.photoshoot[3]?.src} className="aspect-square" />
             <HeroImage src={examples.reviewAfter[0]?.src} className="aspect-square" />
             <HeroImage src={examples.reviewAfter[1]?.src} className="aspect-square" />
-            <div className="col-span-3 rounded-2xl border border-[#10B981]/30 bg-[#10B981]/10 p-4 flex items-center gap-3">
+            <div className="col-span-5 rounded-2xl border border-[#10B981]/30 bg-[#10B981]/10 p-4 flex items-center gap-3">
               <CheckCircle2 size={22} className="text-[#10B981] shrink-0" />
               <div>
                 <div className="font-semibold text-white">Готово за 15-30 минут</div>
