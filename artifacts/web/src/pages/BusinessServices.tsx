@@ -483,10 +483,10 @@ function HeroCtas({ primary }: { primary: string }) {
 function PhotoHeroPremium({ examples, services }: { examples: PhotoExamplesSettings; services: ServiceDef[] }) {
   const wb = services.find((s) => s.key === "wb-photoshoot") ?? fallbackServices[0]!;
   return (
-    <section className="relative pt-28 md:pt-34 pb-12 md:pb-16 min-h-[850px] bg-[#050506]">
+    <section className="relative pt-24 md:pt-28 pb-12 md:pb-14 min-h-[780px] bg-[#050506]">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_76%_25%,rgba(34,211,238,0.12),transparent_30%),radial-gradient(circle_at_18%_45%,rgba(236,72,153,0.12),transparent_28%)]" />
       <div className="container mx-auto px-4 md:px-6 relative">
-        <div className="grid lg:grid-cols-[0.82fr_1.18fr] gap-9 lg:gap-12 items-center">
+        <div className="grid lg:grid-cols-[0.82fr_1.18fr] gap-9 lg:gap-12 items-start">
           <div>
             <div className="inline-flex items-center gap-2 rounded-full border border-[#A855F7]/40 bg-[#A855F7]/10 px-4 py-1.5 text-sm font-semibold text-[#C084FC]">
               <Zap size={15} /> AI-фотосессии для маркетплейсов
