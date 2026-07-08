@@ -5,8 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
-import { useAuth, apiRequest, type AuthUser } from "@/lib/auth";
-import { User as UserIcon, Wallet, ImageIcon, LogOut, Save, KeyRound, Images, CreditCard, Loader2 } from "lucide-react";
+import { useAuth, apiRequest, apiDownload, type AuthUser } from "@/lib/auth";
+import { User as UserIcon, Wallet, ImageIcon, LogOut, Save, KeyRound, Images, CreditCard, Loader2, Download } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PhotoCarousel } from "@/components/PhotoCarousel";
 
@@ -415,7 +415,9 @@ function paymentStatusLabel(status: string): string {
 function OrdersTab() {
   const [rows, setRows] = useState<OrderRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<{ title: string; photos: string[] } | null>(null);
+  const [downloadingOrderId, setDownloadingOrderId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try { setRows(await apiRequest<OrderRow[]>("/auth/me/orders")); }
@@ -436,8 +438,25 @@ function OrdersTab() {
     );
   }
 
+  async function downloadOrderZip(order: OrderRow, title: string) {
+    setDownloadingOrderId(order.id);
+    setDownloadError(null);
+    try {
+      await apiDownload(`/auth/me/orders/${order.id}/photos.zip`, `${title || "generation"}.zip`);
+    } catch (e) {
+      setDownloadError(e instanceof Error ? e.message : "Не удалось скачать архив");
+    } finally {
+      setDownloadingOrderId(null);
+    }
+  }
+
   return (
     <>
+      {downloadError && (
+        <div className="mb-4 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-white">
+          {downloadError}
+        </div>
+      )}
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {rows.map((o) => {
           const status = STATUS_LABELS[o.status] ?? { label: o.status, cls: "bg-secondary border-border text-muted-foreground" };
@@ -445,6 +464,7 @@ function OrdersTab() {
           const title = o.serviceTitle ?? o.styleTitle ?? "Удалено";
           const subtitle = o.locationName ? `Локация: ${o.locationName}` : null;
           const hasPhotos = o.resultPhotos.length > 0;
+          const isDownloading = downloadingOrderId === o.id;
           const openLightbox = () => hasPhotos && setLightbox({ title, photos: o.resultPhotos });
           return (
             <div key={o.id} className="bg-card border border-border rounded-xl overflow-hidden flex flex-col">
@@ -474,17 +494,31 @@ function OrdersTab() {
                 <div className="text-xs text-muted-foreground mt-1">{formatDate(o.createdAt)}</div>
                 <div className="mt-auto pt-3 flex items-center justify-between">
                   <span className="text-sm text-white">{o.amount.toFixed(2)} ₽</span>
-                  {o.status === "awaiting_approval" && o.serviceKey === "wb-photoshoot" ? (
-                    <Link href={`/service/wb-photoshoot?order=${o.id}`}>
-                      <button type="button" className="text-xs text-[#7C3AED] hover:underline">
-                        Проверить кадр
+                  <div className="flex items-center gap-3">
+                    {hasPhotos && (
+                      <button
+                        type="button"
+                        onClick={() => void downloadOrderZip(o, title)}
+                        disabled={isDownloading}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border bg-secondary text-white hover:bg-white/10 disabled:opacity-60"
+                        aria-label={`Скачать все фото заказа «${title}» архивом`}
+                        title="Скачать ZIP"
+                      >
+                        {isDownloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
                       </button>
-                    </Link>
-                  ) : hasPhotos && (
-                    <button type="button" onClick={openLightbox} className="text-xs text-[#7C3AED] hover:underline">
-                      {o.resultPhotos.length > 1 ? "Смотреть все фото" : "Открыть"}
-                    </button>
-                  )}
+                    )}
+                    {o.status === "awaiting_approval" && o.serviceKey === "wb-photoshoot" ? (
+                      <Link href={`/service/wb-photoshoot?order=${o.id}`}>
+                        <button type="button" className="text-xs text-[#7C3AED] hover:underline">
+                          Проверить кадр
+                        </button>
+                      </Link>
+                    ) : hasPhotos && (
+                      <button type="button" onClick={openLightbox} className="text-xs text-[#7C3AED] hover:underline">
+                        {o.resultPhotos.length > 1 ? "Смотреть все фото" : "Открыть"}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

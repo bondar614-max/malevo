@@ -105,3 +105,38 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
+
+function filenameFromDisposition(disposition: string | null): string | null {
+  if (!disposition) return null;
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (encoded) {
+    try { return decodeURIComponent(encoded); } catch { return encoded; }
+  }
+  return disposition.match(/filename="?([^";]+)"?/i)?.[1] ?? null;
+}
+
+export async function apiDownload(path: string, fallbackFilename: string): Promise<void> {
+  const token = localStorage.getItem(TOKEN_KEY);
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(`/api${path}`, { headers });
+  if (!res.ok) {
+    let msg = `${res.status}`;
+    try {
+      const body = await res.json();
+      if (body?.error) msg = body.error;
+    } catch { /* ignore */ }
+    throw new Error(msg);
+  }
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filenameFromDisposition(res.headers.get("content-disposition")) ?? fallbackFilename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}

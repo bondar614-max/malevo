@@ -1,11 +1,12 @@
 import { Router, type IRouter } from "express";
+import { ZipArchive, type ArchiverError } from "archiver";
 import { randomUUID } from "node:crypto";
 import { db, usersTable, ordersTable, stylesTable, servicesTable, locationsTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { z } from "zod";
 import { RegisterBody, LoginBody } from "@workspace/api-zod";
 import { hashPassword, comparePassword, signToken, requireAuth } from "../lib/auth";
-import { uploadBufferToStorage, isLocalStorageUrl } from "../lib/storage-helpers";
+import { uploadBufferToStorage, isLocalStorageUrl, downloadStorageObject } from "../lib/storage-helpers";
 
 async function mirrorIfRemote(url: string): Promise<string> {
   if (isLocalStorageUrl(url)) return url;
@@ -22,6 +23,40 @@ async function mirrorIfRemote(url: string): Promise<string> {
 }
 
 const router: IRouter = Router();
+
+function zipSafeName(value: string): string {
+  const normalized = value
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, " ")
+    .slice(0, 80);
+  return normalized || "photos";
+}
+
+function extensionFromContentType(contentType: string): string {
+  switch (contentType.split(";")[0]?.trim()) {
+    case "image/jpeg": return "jpg";
+    case "image/png": return "png";
+    case "image/webp": return "webp";
+    case "image/gif": return "gif";
+    default: return "jpg";
+  }
+}
+
+async function downloadResultPhoto(url: string): Promise<{ buffer: Buffer; contentType: string }> {
+  if (isLocalStorageUrl(url)) return downloadStorageObject(url);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) throw new Error(`Image request failed: ${response.status}`);
+    const contentType = response.headers.get("content-type") ?? "image/jpeg";
+    return { buffer: Buffer.from(await response.arrayBuffer()), contentType };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 function userResponse(u: typeof usersTable.$inferSelect) {
   return {
@@ -212,6 +247,64 @@ router.get("/auth/me/orders", requireAuth, async (req, res) => {
       locationName: r.locationName,
     })),
   );
+});
+
+router.get("/auth/me/orders/:orderId/photos.zip", requireAuth, async (req, res) => {
+  const orderId = Array.isArray(req.params.orderId) ? req.params.orderId[0] : req.params.orderId;
+  if (!orderId) {
+    res.status(400).json({ error: "Некорректный ID заказа" });
+    return;
+  }
+  const [order] = await db
+    .select({
+      id: ordersTable.id,
+      userId: ordersTable.userId,
+      resultPhotos: ordersTable.resultPhotos,
+      styleTitle: stylesTable.title,
+      serviceTitle: servicesTable.title,
+    })
+    .from(ordersTable)
+    .leftJoin(stylesTable, eq(ordersTable.styleId, stylesTable.id))
+    .leftJoin(servicesTable, eq(ordersTable.serviceKey, servicesTable.key))
+    .where(eq(ordersTable.id, orderId))
+    .limit(1);
+
+  if (!order || order.userId !== req.auth!.userId) {
+    res.status(404).json({ error: "Заказ не найден" });
+    return;
+  }
+
+  const photos = order.resultPhotos ?? [];
+  if (photos.length === 0) {
+    res.status(404).json({ error: "В заказе пока нет готовых фото" });
+    return;
+  }
+
+  try {
+    const files = await Promise.all(photos.map(downloadResultPhoto));
+    const baseName = zipSafeName(order.serviceTitle ?? order.styleTitle ?? "generation");
+    const archiveName = `${baseName}-${order.id.slice(0, 8)}.zip`;
+    const archive = new ZipArchive({ zlib: { level: 9 } });
+
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${archiveName}"; filename*=UTF-8''${encodeURIComponent(archiveName)}`);
+
+    archive.on("error", (err: ArchiverError) => {
+      req.log.error({ err, orderId: order.id }, "failed to create order photos zip");
+      if (!res.headersSent) res.status(500).json({ error: "Не удалось собрать архив" });
+      else res.destroy(err);
+    });
+
+    archive.pipe(res);
+    files.forEach((file, index) => {
+      const ext = extensionFromContentType(file.contentType);
+      archive.append(file.buffer, { name: `photo-${String(index + 1).padStart(2, "0")}.${ext}` });
+    });
+    await archive.finalize();
+  } catch (err) {
+    req.log.error({ err, orderId: order.id }, "failed to download order photos for zip");
+    if (!res.headersSent) res.status(502).json({ error: "Не удалось скачать одно из фото для архива" });
+  }
 });
 
 export default router;

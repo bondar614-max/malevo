@@ -4,8 +4,8 @@ import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Upload, X, Sparkles, Loader2, MapPin, ImagePlus, Plus, Lock, Tag, User, Calendar, Layers, Minus, SlidersHorizontal, Maximize2, CheckCircle2, RotateCcw, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Camera, Snowflake, Flower2, Sun, Leaf, Sunrise, CloudSun, Sunset, Moon } from "lucide-react";
-import { useAuth } from "@/lib/auth";
+import { Upload, X, Sparkles, Loader2, MapPin, ImagePlus, Plus, Lock, Tag, User, Calendar, Layers, Minus, SlidersHorizontal, Maximize2, CheckCircle2, RotateCcw, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Camera, Snowflake, Flower2, Sun, Leaf, Sunrise, CloudSun, Sunset, Moon, Download } from "lucide-react";
+import { apiDownload, useAuth } from "@/lib/auth";
 import { useAuthModal } from "@/components/auth/AuthModal";
 import { PhotoCarousel } from "@/components/PhotoCarousel";
 import { photoshootModels, type PhotoshootModel } from "@/data/photoshootModels";
@@ -483,7 +483,7 @@ export default function Service() {
               <Link href="/"><Button className="bg-gradient-primary text-white border-0">На главную</Button></Link>
             </div>
           ) : phase === "done" ? (
-            <ResultView results={results} service={service} onReset={reset} />
+            <ResultView results={results} service={service} orderId={orderId} onReset={reset} />
           ) : phase === "approval" ? (
             <AnchorApprovalView
               anchorPhotoUrl={anchorPhotoUrl}
@@ -1577,7 +1577,34 @@ function ProcessingView({ service }: { service: ServiceDef }) {
   );
 }
 
-function ResultView({ results, service, onReset }: { results: string[]; service: ServiceDef; onReset: () => void }) {
+function ResultView({
+  results,
+  service,
+  orderId,
+  onReset,
+}: {
+  results: string[];
+  service: ServiceDef;
+  orderId: string | null;
+  onReset: () => void;
+}) {
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const canDownloadZip = service.key === "wb-photoshoot" && !!orderId && results.length > 0;
+
+  async function downloadZip() {
+    if (!orderId) return;
+    setDownloading(true);
+    setDownloadError(null);
+    try {
+      await apiDownload(`/auth/me/orders/${orderId}/photos.zip`, `${service.title}.zip`);
+    } catch (e) {
+      setDownloadError(e instanceof Error ? e.message : "Не удалось скачать архив");
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   return (
     <div className="bg-card border border-border rounded-3xl p-6 md:p-10 space-y-6">
       <div className="text-center">
@@ -1592,7 +1619,24 @@ function ResultView({ results, service, onReset }: { results: string[]; service:
       <div className="max-w-2xl mx-auto">
         <PhotoCarousel photos={results} />
       </div>
+      {downloadError && (
+        <div className="max-w-2xl mx-auto rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-white">
+          {downloadError}
+        </div>
+      )}
       <div className="flex flex-col sm:flex-row gap-3 pt-4 justify-center">
+        {canDownloadZip && (
+          <Button
+            size="lg"
+            variant="outline"
+            onClick={() => void downloadZip()}
+            disabled={downloading}
+            className="border-border text-white"
+          >
+            {downloading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
+            Скачать ZIP
+          </Button>
+        )}
         <Button size="lg" onClick={onReset} className="bg-gradient-primary text-white border-0">
           <Sparkles className="w-4 h-4 mr-2" /> Сгенерировать ещё
         </Button>
