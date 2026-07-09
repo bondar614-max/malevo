@@ -5,9 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { apiFetch, clearAuth, getStoredUser, getToken } from "@/lib/admin-api";
-import { LogOut, Users, ImageIcon, Tag, Layers, Pencil, Trash2, Plus, X, Shield, Upload, Loader2, Sparkles, MapPin, Cpu, Search, Check, Megaphone } from "lucide-react";
+import { LogOut, Users, ImageIcon, Tag, Layers, Pencil, Trash2, Plus, X, Shield, Upload, Loader2, Sparkles, MapPin, Cpu, Search, Check, Megaphone, LayoutDashboard, TrendingUp, Wallet, Clock, CreditCard } from "lucide-react";
 
-type Tab = "users" | "orders" | "tariffs" | "styles" | "services" | "locations" | "promo" | "ai";
+type Tab = "dashboard" | "users" | "orders" | "tariffs" | "styles" | "services" | "locations" | "promo" | "ai";
 
 interface UserRow {
   id: string; email: string; name: string; role: string; isBlocked: boolean;
@@ -46,9 +46,13 @@ function formatDate(iso: string | null): string {
   return new Date(iso).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" });
 }
 
+function formatMoney(value: number): string {
+  return `${value.toLocaleString("ru-RU", { maximumFractionDigits: 0 })} ₽`;
+}
+
 export default function Admin() {
   const [, setLocation] = useLocation();
-  const [tab, setTab] = useState<Tab>("users");
+  const [tab, setTab] = useState<Tab>("dashboard");
   const user = getStoredUser();
 
   useEffect(() => {
@@ -63,6 +67,7 @@ export default function Admin() {
   }
 
   const tabs: Array<{ id: Tab; label: string; icon: typeof Users }> = [
+    { id: "dashboard", label: "Дашборд", icon: LayoutDashboard },
     { id: "users", label: "Пользователи", icon: Users },
     { id: "orders", label: "Генерации", icon: ImageIcon },
     { id: "tariffs", label: "Тарифы", icon: Tag },
@@ -113,6 +118,7 @@ export default function Admin() {
 
       <main className="flex-1 overflow-auto">
         <div className="p-8">
+          {tab === "dashboard" && <DashboardTab />}
           {tab === "users" && <UsersTab />}
           {tab === "orders" && <OrdersTab />}
           {tab === "tariffs" && <TariffsTab />}
@@ -125,6 +131,225 @@ export default function Admin() {
       </main>
     </div>
   );
+}
+
+// ===== Dashboard Tab =====
+type DashboardPeriod = "7d" | "30d" | "90d" | "year" | "all" | "custom";
+interface DashboardData {
+  period: { key: DashboardPeriod; from: string | null; to: string | null };
+  summary: {
+    usersTotal: number;
+    usersNew: number;
+    usersBalance: number;
+    usersTotalSpent: number;
+    ordersTotal: number;
+    ordersSuccess: number;
+    ordersFailed: number;
+    ordersProcessing: number;
+    ordersAwaitingApproval: number;
+    grossOrders: number;
+    averageOrder: number;
+    paymentsCount: number;
+    paymentsRevenue: number;
+    averagePayment: number;
+  };
+  statuses: Array<{ status: string; count: number }>;
+  topItems: Array<{ key: string; label: string; count: number; revenue: number; success: number }>;
+  daily: Array<{ day: string; orders: number; success: number; grossOrders: number; paymentsRevenue: number }>;
+  recentOrders: Array<{ id: string; userEmail: string; label: string; status: string; amount: number; createdAt: string }>;
+}
+
+const PERIODS: Array<{ value: DashboardPeriod; label: string }> = [
+  { value: "7d", label: "7 дней" },
+  { value: "30d", label: "30 дней" },
+  { value: "90d", label: "90 дней" },
+  { value: "year", label: "Год" },
+  { value: "all", label: "Все время" },
+  { value: "custom", label: "Период" },
+];
+
+function isoInputDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function DashboardTab() {
+  const [period, setPeriod] = useState<DashboardPeriod>("30d");
+  const [from, setFrom] = useState(() => isoInputDate(new Date(Date.now() - 29 * 24 * 60 * 60 * 1000)));
+  const [to, setTo] = useState(() => isoInputDate(new Date()));
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setErr("");
+    const params = new URLSearchParams({ period });
+    if (period === "custom") {
+      params.set("from", from);
+      params.set("to", to);
+    }
+    try {
+      setData(await apiFetch<DashboardData>(`/admin/dashboard?${params.toString()}`));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Ошибка загрузки");
+    } finally {
+      setLoading(false);
+    }
+  }, [from, period, to]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const summary = data?.summary;
+  const maxRevenue = Math.max(1, ...(data?.daily.map((d) => d.paymentsRevenue) ?? [1]));
+  const maxOrders = Math.max(1, ...(data?.daily.map((d) => d.orders) ?? [1]));
+
+  return (
+    <div>
+      <div className="flex items-start justify-between gap-4 mb-6">
+        <div>
+          <h2 className="text-3xl font-bold text-white">Дашборд</h2>
+          <p className="text-sm text-muted-foreground mt-1">Сводка по пользователям, платежам, заказам и популярным услугам.</p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <select value={period} onChange={(e) => setPeriod(e.target.value as DashboardPeriod)} className="h-10 bg-secondary border border-border rounded-lg px-3 text-white text-sm">
+            {PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+          </select>
+          {period === "custom" && (
+            <>
+              <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-10 w-36 bg-secondary border-border text-white" />
+              <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-10 w-36 bg-secondary border-border text-white" />
+            </>
+          )}
+        </div>
+      </div>
+
+      {err && <div className="text-sm rounded-lg p-3 border text-red-400 bg-red-500/10 border-red-500/30 mb-4">{err}</div>}
+      {loading && <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="animate-spin" size={18} /> Загрузка данных…</div>}
+
+      {!loading && summary && data && (
+        <div className="space-y-5">
+          <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4">
+            <MetricCard icon={Wallet} label="Пополнения" value={formatMoney(summary.paymentsRevenue)} hint={`${summary.paymentsCount} платежей, средний ${formatMoney(summary.averagePayment)}`} />
+            <MetricCard icon={ImageIcon} label="Генерации" value={summary.ordersTotal.toLocaleString("ru-RU")} hint={`${summary.ordersSuccess} успешно, ${summary.ordersFailed} ошибок`} />
+            <MetricCard icon={Users} label="Пользователи" value={summary.usersTotal.toLocaleString("ru-RU")} hint={`+${summary.usersNew} за период`} />
+            <MetricCard icon={TrendingUp} label="Средний заказ" value={formatMoney(summary.averageOrder)} hint={`Сумма заказов ${formatMoney(summary.grossOrders)}`} />
+          </div>
+
+          <div className="grid xl:grid-cols-[1.4fr_0.8fr] gap-5">
+            <div className="bg-card border border-border rounded-xl p-5">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <div className="font-semibold text-white">Динамика по дням</div>
+                  <div className="text-xs text-muted-foreground">Фиолетовый — пополнения, серый — заказы</div>
+                </div>
+                <div className="text-xs text-muted-foreground">{data.daily.length} точек</div>
+              </div>
+              <div className="h-56 flex items-end gap-1 border-b border-border pb-2 overflow-hidden">
+                {data.daily.map((d) => (
+                  <div key={d.day} className="flex-1 min-w-2 h-full flex items-end gap-0.5" title={`${d.day}: ${formatMoney(d.paymentsRevenue)}, заказов ${d.orders}`}>
+                    <div className="w-1/2 rounded-t bg-gradient-primary" style={{ height: `${Math.max(3, (d.paymentsRevenue / maxRevenue) * 100)}%` }} />
+                    <div className="w-1/2 rounded-t bg-white/20" style={{ height: `${Math.max(3, (d.orders / maxOrders) * 100)}%` }} />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-card border border-border rounded-xl p-5">
+              <div className="font-semibold text-white mb-4">Статусы заказов</div>
+              <div className="space-y-3">
+                {data.statuses.length === 0 && <div className="text-sm text-muted-foreground">Нет заказов за период</div>}
+                {data.statuses.map((s) => (
+                  <div key={s.status}>
+                    <div className="flex justify-between text-sm mb-1">
+                      <span className="text-muted-foreground">{statusLabel(s.status)}</span>
+                      <span className="text-white">{s.count}</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-secondary overflow-hidden">
+                      <div className="h-full bg-gradient-primary" style={{ width: `${summary.ordersTotal ? (s.count / summary.ordersTotal) * 100 : 0}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid xl:grid-cols-2 gap-5">
+            <DashboardList title="Популярные услуги и стили">
+              {data.topItems.length === 0 && <div className="text-sm text-muted-foreground">Нет данных за период</div>}
+              {data.topItems.map((item) => (
+                <div key={item.key} className="flex items-center justify-between gap-4 border-b border-border last:border-0 pb-3 last:pb-0">
+                  <div className="min-w-0">
+                    <div className="text-white font-medium truncate">{item.label}</div>
+                    <div className="text-xs text-muted-foreground">{item.count} заказов, {item.success} успешно</div>
+                  </div>
+                  <div className="text-right text-white font-semibold">{formatMoney(item.revenue)}</div>
+                </div>
+              ))}
+            </DashboardList>
+
+            <DashboardList title="Последние заказы">
+              {data.recentOrders.length === 0 && <div className="text-sm text-muted-foreground">Нет заказов за период</div>}
+              {data.recentOrders.map((o) => (
+                <div key={o.id} className="flex items-center justify-between gap-4 border-b border-border last:border-0 pb-3 last:pb-0">
+                  <div className="min-w-0">
+                    <div className="text-white font-medium truncate">{o.label}</div>
+                    <div className="text-xs text-muted-foreground truncate">{o.userEmail || "Гость"} · {formatDate(o.createdAt)}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-white font-semibold">{formatMoney(o.amount)}</div>
+                    <div className="text-xs text-muted-foreground">{statusLabel(o.status)}</div>
+                  </div>
+                </div>
+              ))}
+            </DashboardList>
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-4">
+            <MetricCard icon={Clock} label="В работе" value={String(summary.ordersProcessing)} hint={`На проверке: ${summary.ordersAwaitingApproval}`} />
+            <MetricCard icon={CreditCard} label="Баланс пользователей" value={formatMoney(summary.usersBalance)} hint="Текущий суммарный баланс" />
+            <MetricCard icon={Wallet} label="Всего потрачено" value={formatMoney(summary.usersTotalSpent)} hint="За все время по пользователям" />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DashboardList({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="bg-card border border-border rounded-xl p-5">
+      <div className="font-semibold text-white mb-4">{title}</div>
+      <div className="space-y-3">{children}</div>
+    </div>
+  );
+}
+
+function MetricCard({ icon: Icon, label, value, hint }: { icon: typeof Users; label: string; value: string; hint: string }) {
+  return (
+    <div className="bg-card border border-border rounded-xl p-5">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm text-muted-foreground">{label}</div>
+          <div className="mt-2 text-3xl font-bold text-white">{value}</div>
+        </div>
+        <div className="w-11 h-11 rounded-xl bg-[#7C3AED]/15 text-[#C4B5FD] flex items-center justify-center">
+          <Icon size={22} />
+        </div>
+      </div>
+      <div className="mt-3 text-xs text-muted-foreground">{hint}</div>
+    </div>
+  );
+}
+
+function statusLabel(status: string): string {
+  const map: Record<string, string> = {
+    success: "Успешно",
+    failed: "Ошибка",
+    processing: "В работе",
+    awaiting_approval: "Ожидает проверки",
+    pending: "Ожидает",
+  };
+  return map[status] ?? status;
 }
 
 // ===== Users Tab =====
