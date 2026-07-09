@@ -267,6 +267,43 @@ const AssistResultSchema = z.object({
   imagePrompt: z.string().min(1),
 });
 
+function extractJsonObject(raw: string): unknown {
+  const trimmed = raw.trim();
+  if (!trimmed) throw new Error("empty AI response");
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    if (fenced?.[1]) return JSON.parse(fenced[1]) as unknown;
+    const start = trimmed.indexOf("{");
+    const end = trimmed.lastIndexOf("}");
+    if (start >= 0 && end > start) return JSON.parse(trimmed.slice(start, end + 1)) as unknown;
+    throw new Error("AI response did not contain JSON");
+  }
+}
+
+function aiTextErrorMessage(err: unknown): string {
+  const e = err as { status?: number; code?: string; message?: string; error?: { message?: string } };
+  const status = e.status;
+  if (status === 401 || status === 403) {
+    return "OpenRouter/OpenAI отклонил ключ: проверьте, что сохранён действующий OpenRouter API key в разделе «ИИ-модели».";
+  }
+  if (status === 402) {
+    return "На OpenRouter/OpenAI недостаточно баланса для текстовой генерации.";
+  }
+  if (status === 404) {
+    return "Выбранная текстовая модель недоступна. Попробуйте openai/gpt-4o-mini в настройках ИИ поддержки.";
+  }
+  if (status === 429) {
+    return "OpenRouter/OpenAI временно ограничил запросы или исчерпана квота. Попробуйте позже.";
+  }
+  const rawMessage = e.error?.message || e.message || "";
+  const message = rawMessage.replace(/sk-[A-Za-z0-9_-]+/g, "sk-***").slice(0, 220);
+  return message
+    ? `Не удалось сгенерировать тексты: ${message}`
+    : "Не удалось сгенерировать тексты. Проверьте ключ OpenRouter/OpenAI и попробуйте снова.";
+}
+
 router.post("/admin/styles/assist", async (req, res) => {
   const parsed = AssistSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -300,7 +337,7 @@ router.post("/admin/styles/assist", async (req, res) => {
       max_completion_tokens: 1200,
     });
     const raw = completion.choices[0]?.message?.content ?? "";
-    const json = JSON.parse(raw) as unknown;
+    const json = extractJsonObject(raw);
     const validated = AssistResultSchema.safeParse(json);
     if (!validated.success) {
       req.log.error({ raw }, "assist returned unexpected shape");
@@ -310,7 +347,7 @@ router.post("/admin/styles/assist", async (req, res) => {
     result = validated.data;
   } catch (err) {
     req.log.error({ err }, "assist text generation failed");
-    res.status(502).json({ error: "Не удалось сгенерировать тексты. Проверьте ключ OpenAI и попробуйте снова." });
+    res.status(502).json({ error: aiTextErrorMessage(err) });
     return;
   }
 

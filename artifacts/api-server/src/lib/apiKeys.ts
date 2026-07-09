@@ -8,9 +8,9 @@ const SETTING_KEYS: Record<ApiKeyProvider, string> = {
   kie: "api_key:kie",
 };
 
-const ENV_KEYS: Record<ApiKeyProvider, string> = {
-  openrouter: "OPENAI_API_KEY",
-  kie: "KIE_AI_API_KEY",
+const ENV_KEYS: Record<ApiKeyProvider, string[]> = {
+  openrouter: ["OPENROUTER_API_KEY", "OPENAI_API_KEY"],
+  kie: ["KIE_AI_API_KEY"],
 };
 
 function normalize(value: string | undefined | null): string {
@@ -26,7 +26,11 @@ export async function getApiKey(provider: ApiKeyProvider): Promise<string> {
     .limit(1);
   const stored = normalize(row?.value);
   if (stored) return stored;
-  return normalize(process.env[ENV_KEYS[provider]]);
+  for (const envKey of ENV_KEYS[provider]) {
+    const envValue = normalize(process.env[envKey]);
+    if (envValue) return envValue;
+  }
+  return "";
 }
 
 export async function setApiKey(provider: ApiKeyProvider, value: string): Promise<void> {
@@ -53,8 +57,13 @@ export async function getApiKeyStatus(): Promise<Record<ApiKeyProvider, { config
       .limit(1);
     if (normalize(row?.value)) {
       out[provider] = { configured: true, source: "database" };
-    } else if (normalize(process.env[ENV_KEYS[provider]])) {
-      out[provider] = { configured: true, source: "env" };
+    } else {
+      for (const envKey of ENV_KEYS[provider]) {
+        if (normalize(process.env[envKey])) {
+          out[provider] = { configured: true, source: "env" };
+          break;
+        }
+      }
     }
   }
   return out;

@@ -66,7 +66,7 @@ export async function listOpenRouterTextModels(): Promise<TextModelOption[]> {
 /** Lazily construct the OpenAI-compatible client so the server can boot without the key. */
 export async function getOpenAI(): Promise<OpenAI> {
   const key = await getApiKey("openrouter");
-  if (!key) throw new Error("OPENAI_API_KEY is not configured");
+  if (!key) throw new Error("OpenRouter/OpenAI API key is not configured");
   return new OpenAI({
     apiKey: key,
     ...(isOpenRouterKey(key) ? { baseURL: "https://openrouter.ai/api/v1" } : {}),
