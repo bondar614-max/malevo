@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
-import { db, usersTable } from "@workspace/db";
+import { db, appSettingsTable, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { requireAuth } from "../lib/auth";
@@ -9,7 +9,7 @@ import {
   setCategoryModel,
   type GenCategory,
 } from "../lib/imageGen";
-import { openRouterHeaders } from "../lib/openai";
+import { DEFAULT_STYLE_ASSIST_MODEL, listOpenRouterTextModels, openRouterHeaders } from "../lib/openai";
 
 const router: IRouter = Router();
 
@@ -24,8 +24,21 @@ router.get("/admin/ai/models", requireAuth, requireAdmin, async (_req, res) => {
   res.json(await listImageModels());
 });
 
+router.get("/admin/ai/text-models", requireAuth, requireAdmin, async (_req, res) => {
+  res.json(await listOpenRouterTextModels());
+});
+
 router.get("/admin/ai/settings", requireAuth, requireAdmin, async (_req, res) => {
-  res.json(await getAllCategoryModels());
+  const models = await getAllCategoryModels();
+  const [row] = await db
+    .select({ value: appSettingsTable.value })
+    .from(appSettingsTable)
+    .where(eq(appSettingsTable.key, "style_assist:model"))
+    .limit(1);
+  res.json({
+    ...models,
+    styleAssistModel: row?.value.trim() || DEFAULT_STYLE_ASSIST_MODEL,
+  });
 });
 
 function keyCandidates(): Array<{ provider: "openrouter"; source: string; value: string }> {
@@ -97,7 +110,21 @@ const SettingsSchema = z.object({
   styles: z.string().min(1).optional(),
   photoshoot: z.string().min(1).optional(),
   review: z.string().min(1).optional(),
+  styleAssistModel: z.string().min(1).optional(),
 });
+
+async function setSetting(key: string, value: string): Promise<void> {
+  const [existing] = await db
+    .select({ key: appSettingsTable.key })
+    .from(appSettingsTable)
+    .where(eq(appSettingsTable.key, key))
+    .limit(1);
+  if (existing) {
+    await db.update(appSettingsTable).set({ value, updatedAt: new Date() }).where(eq(appSettingsTable.key, key));
+  } else {
+    await db.insert(appSettingsTable).values({ key, value, updatedAt: new Date() });
+  }
+}
 
 router.patch("/admin/ai/settings", requireAuth, requireAdmin, async (req, res) => {
   const parsed = SettingsSchema.safeParse(req.body);
@@ -110,7 +137,14 @@ router.patch("/admin/ai/settings", requireAuth, requireAdmin, async (req, res) =
     const v = parsed.data[c];
     if (typeof v === "string") await setCategoryModel(c, v);
   }
-  res.json(await getAllCategoryModels());
+  if (typeof parsed.data.styleAssistModel === "string") {
+    await setSetting("style_assist:model", parsed.data.styleAssistModel);
+  }
+  const models = await getAllCategoryModels();
+  res.json({
+    ...models,
+    styleAssistModel: parsed.data.styleAssistModel || DEFAULT_STYLE_ASSIST_MODEL,
+  });
 });
 
 export default router;

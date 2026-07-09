@@ -1168,8 +1168,9 @@ function LocationEditor({ initial, onClose, onSaved }: { initial: LocationRow; o
 
 // ===== AI Models Tab =====
 type GenProvider = "kie" | "openrouter";
+type AiModelCategory = "styles" | "photoshoot" | "review";
 interface ModelOption { id: string; name: string; provider: GenProvider; }
-interface AiSettings { styles: string; photoshoot: string; review: string; }
+interface AiSettings { styles: string; photoshoot: string; review: string; styleAssistModel: string; }
 interface AiKeyDiagnostic {
   provider: "openrouter";
   source: string;
@@ -1179,7 +1180,7 @@ interface AiKeyDiagnostic {
   message: string;
 }
 
-const AI_CATEGORIES: Array<{ key: keyof AiSettings; label: string; desc: string }> = [
+const AI_CATEGORIES: Array<{ key: AiModelCategory; label: string; desc: string }> = [
   { key: "styles", label: "Стили", desc: "Модель для генерации стилей" },
   { key: "photoshoot", label: "Фотосессия", desc: "Модель для услуги фотосессии (WB)" },
   { key: "review", label: "Фото для отзывов", desc: "Модель для генерации фото-отзывов" },
@@ -1196,6 +1197,7 @@ function providerOf(modelId: string): GenProvider {
 
 function AiModelsTab() {
   const [models, setModels] = useState<ModelOption[]>([]);
+  const [textModels, setTextModels] = useState<ModelOption[]>([]);
   const [settings, setSettings] = useState<AiSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1203,7 +1205,7 @@ function AiModelsTab() {
   const [keyDiagnostics, setKeyDiagnostics] = useState<AiKeyDiagnostic[]>([]);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState(false);
-  const [providerByCat, setProviderByCat] = useState<Record<keyof AiSettings, GenProvider>>({
+  const [providerByCat, setProviderByCat] = useState<Record<AiModelCategory, GenProvider>>({
     styles: "kie",
     photoshoot: "kie",
     review: "kie",
@@ -1216,8 +1218,10 @@ function AiModelsTab() {
           apiFetch<ModelOption[]>("/admin/ai/models"),
           apiFetch<AiSettings>("/admin/ai/settings"),
         ]);
+        const tm = await apiFetch<ModelOption[]>("/admin/ai/text-models");
         setModels(m);
-        setSettings(s);
+        setTextModels(tm);
+        setSettings({ ...s, styleAssistModel: s.styleAssistModel ?? "openai/gpt-4o-mini" });
         setProviderByCat({
           styles: providerOf(s.styles),
           photoshoot: providerOf(s.photoshoot),
@@ -1321,6 +1325,23 @@ function AiModelsTab() {
               ))}
             </div>
           )}
+        </div>
+
+        <div className="bg-card border border-border rounded-xl p-5">
+          <div className="mb-4">
+            <div className="font-semibold text-white">Тексты AI-помощника стилей</div>
+            <div className="text-xs text-muted-foreground">
+              Эта модель заполняет название, описания, категорию и prompt в окне создания нового стиля.
+            </div>
+          </div>
+          <ModelSelect
+            models={textModels}
+            value={settings?.styleAssistModel ?? "openai/gpt-4o-mini"}
+            onChange={(v) => setSettings((s) => (s ? { ...s, styleAssistModel: v } : s))}
+          />
+          <div className="mt-2 text-xs text-muted-foreground">
+            Превью-картинка стиля создаётся через KIE / Nano Banana Pro.
+          </div>
         </div>
 
         {AI_CATEGORIES.map((cat) => {

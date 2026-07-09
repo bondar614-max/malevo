@@ -3,7 +3,7 @@ import { db, usersTable, ordersTable, stylesTable, tariffsTable, servicesTable, 
 import { eq, desc, sql } from "drizzle-orm";
 import { z } from "zod";
 import { hashPassword, requireAuth } from "../lib/auth";
-import { getOpenAIClientCandidates } from "../lib/openai";
+import { getOpenAIClientCandidates, styleAssistModel } from "../lib/openai";
 import { kieCreateNanoBananaProTask, kieGetTask, kieUploadFile } from "../lib/kie";
 import { uploadBufferToStorage, downloadStorageObject } from "../lib/storage-helpers";
 
@@ -323,14 +323,14 @@ router.post("/admin/styles/assist", async (req, res) => {
       },
       { role: "user" as const, content: idea },
     ];
-    const candidates = getOpenAIClientCandidates();
+    const candidates = getOpenAIClientCandidates(await styleAssistModel());
     let completion;
     let lastErr: unknown = null;
     for (let i = 0; i < candidates.length; i++) {
       const candidate = candidates[i]!;
       try {
         completion = await candidate.client.chat.completions.create({
-          model: candidate.assistModel,
+          model: candidate.model,
           response_format: { type: "json_object" },
           messages,
           max_completion_tokens: 1200,
