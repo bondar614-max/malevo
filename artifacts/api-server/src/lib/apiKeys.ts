@@ -2,6 +2,11 @@ import { db, appSettingsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
 export type ApiKeyProvider = "openrouter" | "kie";
+export interface ApiKeyCandidate {
+  value: string;
+  source: "database" | "env";
+  name: string;
+}
 
 const SETTING_KEYS: Record<ApiKeyProvider, string> = {
   openrouter: "api_key:openrouter",
@@ -18,6 +23,12 @@ function normalize(value: string | undefined | null): string {
 }
 
 export async function getApiKey(provider: ApiKeyProvider): Promise<string> {
+  const [first] = await getApiKeyCandidates(provider);
+  return first?.value ?? "";
+}
+
+export async function getApiKeyCandidates(provider: ApiKeyProvider): Promise<ApiKeyCandidate[]> {
+  const out: ApiKeyCandidate[] = [];
   const key = SETTING_KEYS[provider];
   const [row] = await db
     .select()
@@ -25,12 +36,14 @@ export async function getApiKey(provider: ApiKeyProvider): Promise<string> {
     .where(eq(appSettingsTable.key, key))
     .limit(1);
   const stored = normalize(row?.value);
-  if (stored) return stored;
+  if (stored) out.push({ value: stored, source: "database", name: key });
   for (const envKey of ENV_KEYS[provider]) {
     const envValue = normalize(process.env[envKey]);
-    if (envValue) return envValue;
+    if (envValue && !out.some((candidate) => candidate.value === envValue)) {
+      out.push({ value: envValue, source: "env", name: envKey });
+    }
   }
-  return "";
+  return out;
 }
 
 export async function setApiKey(provider: ApiKeyProvider, value: string): Promise<void> {

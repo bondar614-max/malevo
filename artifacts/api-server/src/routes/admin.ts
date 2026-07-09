@@ -5,7 +5,7 @@ import { eq, desc, sql } from "drizzle-orm";
 import { z } from "zod";
 import { hashPassword, requireAuth } from "../lib/auth";
 import { affectedRows } from "../lib/db-result";
-import { getOpenAI, assistModel } from "../lib/openai";
+import { getOpenAIClientCandidates } from "../lib/openai";
 import { kieCreateNanoBananaProTask, kieGetTask, kieUploadFile } from "../lib/kie";
 import { uploadBufferToStorage, downloadStorageObject } from "../lib/storage-helpers";
 
@@ -304,6 +304,11 @@ function aiTextErrorMessage(err: unknown): string {
     : "Не удалось сгенерировать тексты. Проверьте ключ OpenRouter/OpenAI и попробуйте снова.";
 }
 
+function isAuthProviderError(err: unknown): boolean {
+  const status = (err as { status?: number })?.status;
+  return status === 401 || status === 403;
+}
+
 router.post("/admin/styles/assist", async (req, res) => {
   const parsed = AssistSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -315,27 +320,43 @@ router.post("/admin/styles/assist", async (req, res) => {
 
   let result: z.infer<typeof AssistResultSchema>;
   try {
-      const completion = await (await getOpenAI()).chat.completions.create({
-      model: await assistModel(),
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content:
-            "Ты — ассистент фоторедактора PhotoGen AI. По идее администратора ты придумываешь карточку нового фотостиля. " +
-            "Отвечай строго JSON-объектом со следующими полями: " +
-            "title (короткое название стиля на русском, 2–4 слова), " +
-            "shortDescription (короткое описание на русском, одна строка до 80 символов), " +
-            "fullDescription (полное описание на русском, 2–3 предложения, что получит пользователь), " +
-            "category (одна категория на русском, например «Деловой», «Творческий», «Гламур»), " +
-            "prompt (инструкция на АНГЛИЙСКОМ для модели редактирования изображений Nano Banana Pro — как преобразовать загруженное пользователем фото в этот стиль, сохраняя лицо и черты человека; детально опиши свет, фон, одежду, настроение), " +
-            "imagePrompt (отдельный промпт на АНГЛИЙСКОМ для генерации привлекательной обложки-примера этого стиля с фотореалистичным человеком; portrait, high quality). " +
-            "Никакого текста кроме JSON.",
-        },
-        { role: "user", content: idea },
-      ],
-      max_completion_tokens: 1200,
-    });
+    const messages = [
+      {
+        role: "system" as const,
+        content:
+          "Ты — ассистент фоторедактора PhotoGen AI. По идее администратора ты придумываешь карточку нового фотостиля. " +
+          "Отвечай строго JSON-объектом со следующими полями: " +
+          "title (короткое название стиля на русском, 2–4 слова), " +
+          "shortDescription (короткое описание на русском, одна строка до 80 символов), " +
+          "fullDescription (полное описание на русском, 2–3 предложения, что получит пользователь), " +
+          "category (одна категория на русском, например «Деловой», «Творческий», «Гламур»), " +
+          "prompt (инструкция на АНГЛИЙСКОМ для модели редактирования изображений Nano Banana Pro — как преобразовать загруженное пользователем фото в этот стиль, сохраняя лицо и черты человека; детально опиши свет, фон, одежду, настроение), " +
+          "imagePrompt (отдельный промпт на АНГЛИЙСКОМ для генерации привлекательной обложки-примера этого стиля с фотореалистичным человеком; portrait, high quality). " +
+          "Никакого текста кроме JSON.",
+      },
+      { role: "user" as const, content: idea },
+    ];
+    const candidates = await getOpenAIClientCandidates();
+    let completion;
+    let lastErr: unknown = null;
+    for (let i = 0; i < candidates.length; i++) {
+      const candidate = candidates[i]!;
+      try {
+        completion = await candidate.client.chat.completions.create({
+          model: candidate.assistModel,
+          response_format: { type: "json_object" },
+          messages,
+          max_completion_tokens: 1200,
+        });
+        if (i > 0) req.log.info({ source: candidate.source }, "assist text generation succeeded with fallback key");
+        break;
+      } catch (err) {
+        lastErr = err;
+        if (!isAuthProviderError(err) || i === candidates.length - 1) throw err;
+        req.log.warn({ source: candidate.source }, "assist key rejected; trying fallback key");
+      }
+    }
+    if (!completion) throw lastErr ?? new Error("AI provider returned no completion");
     const raw = completion.choices[0]?.message?.content ?? "";
     const json = extractJsonObject(raw);
     const validated = AssistResultSchema.safeParse(json);

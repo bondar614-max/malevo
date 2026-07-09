@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { getApiKey } from "./apiKeys";
+import { getApiKey, getApiKeyCandidates } from "./apiKeys";
 import { db, appSettingsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
@@ -30,6 +30,12 @@ export interface TextModelOption {
   id: string;
   name: string;
   provider: "openrouter";
+}
+
+export interface OpenAIClientCandidate {
+  client: OpenAI;
+  assistModel: string;
+  source: string;
 }
 
 export async function listOpenRouterTextModels(): Promise<TextModelOption[]> {
@@ -71,4 +77,17 @@ export async function getOpenAI(): Promise<OpenAI> {
     apiKey: key,
     ...(isOpenRouterKey(key) ? { baseURL: "https://openrouter.ai/api/v1" } : {}),
   });
+}
+
+export async function getOpenAIClientCandidates(): Promise<OpenAIClientCandidate[]> {
+  const keys = await getApiKeyCandidates("openrouter");
+  if (keys.length === 0) throw new Error("OpenRouter/OpenAI API key is not configured");
+  return keys.map((key) => ({
+    client: new OpenAI({
+      apiKey: key.value,
+      ...(isOpenRouterKey(key.value) ? { baseURL: "https://openrouter.ai/api/v1" } : {}),
+    }),
+    assistModel: isOpenRouterKey(key.value) ? "openai/gpt-4o-mini" : "gpt-4o-mini",
+    source: `${key.source}:${key.name}`,
+  }));
 }
