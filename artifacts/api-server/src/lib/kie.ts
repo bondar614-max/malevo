@@ -30,42 +30,104 @@ export interface KieChatMessage {
   content: string;
 }
 
+type KieChatContent = string | Array<{ type?: string; text?: string }>;
+
+interface KieChatResponse {
+  code?: number;
+  msg?: string;
+  message?: string;
+  choices?: Array<{ message?: { content?: KieChatContent } }>;
+  data?: {
+    choices?: Array<{ message?: { content?: KieChatContent } }>;
+    content?: string;
+    response?: string;
+    text?: string;
+  };
+}
+
+function kieChatUrls(model: string): string[] {
+  const encoded = encodeURIComponent(model);
+  return [
+    `${KIE_BASE}/api/v1/${encoded}/v1/chat/completions`,
+    `${KIE_BASE}/${encoded}/v1/chat/completions`,
+  ];
+}
+
+function normalizeKieContent(content: KieChatContent | undefined): string | null {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    const text = content.map((part) => part.text ?? "").join("").trim();
+    return text || null;
+  }
+  return null;
+}
+
+function extractKieChatText(json: KieChatResponse): string | null {
+  return (
+    normalizeKieContent(json.choices?.[0]?.message?.content) ??
+    normalizeKieContent(json.data?.choices?.[0]?.message?.content) ??
+    json.data?.content ??
+    json.data?.response ??
+    json.data?.text ??
+    null
+  );
+}
+
+function parseJsonMaybe(text: string): KieChatResponse | null {
+  try {
+    return JSON.parse(text) as KieChatResponse;
+  } catch {
+    return null;
+  }
+}
+
 export async function kieCreateChatCompletion(input: {
   model: string;
   messages: KieChatMessage[];
   maxCompletionTokens?: number;
 }): Promise<string> {
   const model = input.model.startsWith("kie:") ? input.model.slice("kie:".length) : input.model;
-  const res = await fetchWithTimeout(
-    `${KIE_BASE}/api/v1/${encodeURIComponent(model)}/v1/chat/completions`,
-    {
+  const key = await apiKey();
+  const body = JSON.stringify({
+    messages: input.messages,
+    response_format: { type: "json_object" },
+    max_completion_tokens: input.maxCompletionTokens ?? 1200,
+  });
+
+  let lastError = "";
+  const urls = kieChatUrls(model);
+  for (const [index, url] of urls.entries()) {
+    const res = await fetchWithTimeout(url, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${await apiKey()}`,
+        Authorization: `Bearer ${key}`,
         Accept: "application/json",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        messages: input.messages,
-        response_format: { type: "json_object" },
-        max_completion_tokens: input.maxCompletionTokens ?? 1200,
-      }),
-    },
-    120_000,
-  );
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`kie chat failed: ${res.status} ${text.slice(0, 220)}`);
+      body,
+    }, 120_000);
+    const text = await res.text();
+    const json = parseJsonMaybe(text);
+    const serviceCode = json?.code;
+    const serviceMessage = json?.msg ?? json?.message;
+    const isNotFound = res.status === 404 || serviceCode === 404;
+
+    if (isNotFound && index < urls.length - 1) {
+      lastError = `${res.status} ${serviceMessage ?? text.slice(0, 180)}`;
+      continue;
+    }
+    if (!res.ok) {
+      throw new Error(`kie chat failed: ${res.status} ${text.slice(0, 220)}`);
+    }
+    if (typeof serviceCode === "number" && serviceCode !== 0 && serviceCode !== 200) {
+      throw new Error(`kie chat failed: ${serviceCode} ${serviceMessage ?? text.slice(0, 180)}`);
+    }
+
+    const content = json ? extractKieChatText(json) : null;
+    if (content) return content;
+    throw new Error(`kie chat returned no text${lastError ? `; previous endpoint failed: ${lastError}` : ""}`);
   }
-  const json = JSON.parse(text) as {
-    choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>;
-  };
-  const content = json.choices?.[0]?.message?.content;
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content.map((part) => part.text ?? "").join("").trim();
-  }
-  throw new Error("kie chat returned no text");
+  throw new Error(`kie chat failed${lastError ? `: ${lastError}` : ""}`);
 }
 
 /**
