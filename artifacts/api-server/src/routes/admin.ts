@@ -3,7 +3,7 @@ import { db, usersTable, ordersTable, stylesTable, tariffsTable, servicesTable, 
 import { eq, desc, sql } from "drizzle-orm";
 import { z } from "zod";
 import { hashPassword, requireAuth } from "../lib/auth";
-import { getOpenAI, assistModel } from "../lib/openai";
+import { getOpenAIClientCandidates } from "../lib/openai";
 import { kieCreateNanoBananaProTask, kieGetTask, kieUploadFile } from "../lib/kie";
 import { uploadBufferToStorage, downloadStorageObject } from "../lib/storage-helpers";
 
@@ -260,6 +260,42 @@ const AssistResultSchema = z.object({
   imagePrompt: z.string().min(1),
 });
 
+function extractJsonObject(raw: string): unknown {
+  const trimmed = raw.trim();
+  if (!trimmed) throw new Error("empty AI response");
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    if (fenced?.[1]) return JSON.parse(fenced[1]) as unknown;
+    const start = trimmed.indexOf("{");
+    const end = trimmed.lastIndexOf("}");
+    if (start >= 0 && end > start) return JSON.parse(trimmed.slice(start, end + 1)) as unknown;
+    throw new Error("AI response did not contain JSON");
+  }
+}
+
+function aiTextErrorMessage(err: unknown): string {
+  const e = err as { status?: number; message?: string; error?: { message?: string } };
+  const status = e.status;
+  if (status === 401 || status === 403) {
+    return "OpenRouter/OpenAI отклонил ключ: проверьте, что сохранён действующий OpenRouter API key.";
+  }
+  if (status === 402) return "На OpenRouter/OpenAI недостаточно баланса для текстовой генерации.";
+  if (status === 404) return "Текстовая модель недоступна. Попробуйте openai/gpt-4o-mini.";
+  if (status === 429) return "OpenRouter/OpenAI временно ограничил запросы или исчерпана квота. Попробуйте позже.";
+  const rawMessage = e.error?.message || e.message || "";
+  const message = rawMessage.replace(/sk-[A-Za-z0-9_-]+/g, "sk-***").slice(0, 220);
+  return message
+    ? `Не удалось сгенерировать тексты: ${message}`
+    : "Не удалось сгенерировать тексты. Проверьте ключ OpenRouter/OpenAI и попробуйте снова.";
+}
+
+function isAuthProviderError(err: unknown): boolean {
+  const status = (err as { status?: number })?.status;
+  return status === 401 || status === 403;
+}
+
 router.post("/admin/styles/assist", async (req, res) => {
   const parsed = AssistSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -271,29 +307,45 @@ router.post("/admin/styles/assist", async (req, res) => {
 
   let result: z.infer<typeof AssistResultSchema>;
   try {
-    const completion = await getOpenAI().chat.completions.create({
-      model: assistModel(),
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content:
-            "Ты — ассистент фоторедактора PhotoGen AI. По идее администратора ты придумываешь карточку нового фотостиля. " +
-            "Отвечай строго JSON-объектом со следующими полями: " +
-            "title (короткое название стиля на русском, 2–4 слова), " +
-            "shortDescription (короткое описание на русском, одна строка до 80 символов), " +
-            "fullDescription (полное описание на русском, 2–3 предложения, что получит пользователь), " +
-            "category (одна категория на русском, например «Деловой», «Творческий», «Гламур»), " +
-            "prompt (инструкция на АНГЛИЙСКОМ для модели редактирования изображений Nano Banana Pro — как преобразовать загруженное пользователем фото в этот стиль, сохраняя лицо и черты человека; детально опиши свет, фон, одежду, настроение), " +
-            "imagePrompt (отдельный промпт на АНГЛИЙСКОМ для генерации привлекательной обложки-примера этого стиля с фотореалистичным человеком; portrait, high quality). " +
-            "Никакого текста кроме JSON.",
-        },
-        { role: "user", content: idea },
-      ],
-      max_completion_tokens: 1200,
-    });
+    const messages = [
+      {
+        role: "system" as const,
+        content:
+          "Ты — ассистент фоторедактора PhotoGen AI. По идее администратора ты придумываешь карточку нового фотостиля. " +
+          "Отвечай строго JSON-объектом со следующими полями: " +
+          "title (короткое название стиля на русском, 2–4 слова), " +
+          "shortDescription (короткое описание на русском, одна строка до 80 символов), " +
+          "fullDescription (полное описание на русском, 2–3 предложения, что получит пользователь), " +
+          "category (одна категория на русском, например «Деловой», «Творческий», «Гламур»), " +
+          "prompt (инструкция на АНГЛИЙСКОМ для модели редактирования изображений Nano Banana Pro — как преобразовать загруженное пользователем фото в этот стиль, сохраняя лицо и черты человека; детально опиши свет, фон, одежду, настроение), " +
+          "imagePrompt (отдельный промпт на АНГЛИЙСКОМ для генерации привлекательной обложки-примера этого стиля с фотореалистичным человеком; portrait, high quality). " +
+          "Никакого текста кроме JSON.",
+      },
+      { role: "user" as const, content: idea },
+    ];
+    const candidates = getOpenAIClientCandidates();
+    let completion;
+    let lastErr: unknown = null;
+    for (let i = 0; i < candidates.length; i++) {
+      const candidate = candidates[i]!;
+      try {
+        completion = await candidate.client.chat.completions.create({
+          model: candidate.assistModel,
+          response_format: { type: "json_object" },
+          messages,
+          max_completion_tokens: 1200,
+        });
+        if (i > 0) req.log.info({ source: candidate.source }, "assist text generation succeeded with fallback key");
+        break;
+      } catch (err) {
+        lastErr = err;
+        if (!isAuthProviderError(err) || i === candidates.length - 1) throw err;
+        req.log.warn({ source: candidate.source }, "assist key rejected; trying fallback key");
+      }
+    }
+    if (!completion) throw lastErr ?? new Error("AI provider returned no completion");
     const raw = completion.choices[0]?.message?.content ?? "";
-    const json = JSON.parse(raw) as unknown;
+    const json = extractJsonObject(raw);
     const validated = AssistResultSchema.safeParse(json);
     if (!validated.success) {
       req.log.error({ raw }, "assist returned unexpected shape");
@@ -303,7 +355,7 @@ router.post("/admin/styles/assist", async (req, res) => {
     result = validated.data;
   } catch (err) {
     req.log.error({ err }, "assist text generation failed");
-    res.status(502).json({ error: "Не удалось сгенерировать тексты. Проверьте ключ OpenAI и попробуйте снова." });
+    res.status(502).json({ error: aiTextErrorMessage(err) });
     return;
   }
 
