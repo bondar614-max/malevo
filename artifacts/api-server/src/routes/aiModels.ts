@@ -9,6 +9,7 @@ import {
   setCategoryModel,
   type GenCategory,
 } from "../lib/imageGen";
+import { openRouterHeaders } from "../lib/openai";
 
 const router: IRouter = Router();
 
@@ -49,7 +50,7 @@ async function checkOpenRouterKey(value: string): Promise<{ ok: boolean; status?
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), 20_000);
     const response = await fetch("https://openrouter.ai/api/v1/key", {
-      headers: { Authorization: `Bearer ${value}` },
+      headers: openRouterHeaders(value),
       signal: ac.signal,
     });
     clearTimeout(t);

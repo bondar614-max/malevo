@@ -16,6 +16,16 @@ function openAiKeyCandidates(): Array<{ value: string; source: string }> {
   return out;
 }
 
+export function openRouterHeaders(key: string): Record<string, string> {
+  const referer = process.env.PUBLIC_APP_URL?.trim() || "https://malevo.pro";
+  return {
+    Authorization: `Bearer ${key}`,
+    "HTTP-Referer": referer,
+    "X-Title": "Malevo",
+    "User-Agent": "Malevo/1.0",
+  };
+}
+
 /** Model id to use for text generation, namespaced for OpenRouter when needed. */
 export function assistModel(): string {
   const key = openAiKeyCandidates()[0]?.value ?? "";
@@ -28,6 +38,7 @@ export function getOpenAI(): OpenAI {
   return new OpenAI({
     apiKey: candidate.value,
     ...(isOpenRouterKey(candidate.value) ? { baseURL: "https://openrouter.ai/api/v1" } : {}),
+    defaultHeaders: isOpenRouterKey(candidate.value) ? openRouterHeaders(candidate.value) : undefined,
   });
 }
 
@@ -44,6 +55,7 @@ export function getOpenAIClientCandidates(): OpenAIClientCandidate[] {
     client: new OpenAI({
       apiKey: candidate.value,
       ...(isOpenRouterKey(candidate.value) ? { baseURL: "https://openrouter.ai/api/v1" } : {}),
+      defaultHeaders: isOpenRouterKey(candidate.value) ? openRouterHeaders(candidate.value) : undefined,
     }),
     assistModel: isOpenRouterKey(candidate.value) ? "openai/gpt-4o-mini" : "gpt-4o-mini",
     source: candidate.source,
