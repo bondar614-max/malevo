@@ -9,7 +9,13 @@ import {
   setCategoryModel,
   type GenCategory,
 } from "../lib/imageGen";
-import { DEFAULT_STYLE_ASSIST_MODEL, listOpenRouterTextModels, openRouterHeaders } from "../lib/openai";
+import {
+  DEFAULT_STYLE_ASSIST_MODEL,
+  DEFAULT_STYLE_ASSIST_PROVIDER,
+  KIE_TEXT_MODELS,
+  listOpenRouterTextModels,
+  openRouterHeaders,
+} from "../lib/openai";
 
 const router: IRouter = Router();
 
@@ -25,19 +31,24 @@ router.get("/admin/ai/models", requireAuth, requireAdmin, async (_req, res) => {
 });
 
 router.get("/admin/ai/text-models", requireAuth, requireAdmin, async (_req, res) => {
-  res.json(await listOpenRouterTextModels());
+  res.json([...(await listOpenRouterTextModels()), ...KIE_TEXT_MODELS]);
 });
 
 router.get("/admin/ai/settings", requireAuth, requireAdmin, async (_req, res) => {
   const models = await getAllCategoryModels();
-  const [row] = await db
+  const rows = await db
     .select({ value: appSettingsTable.value })
     .from(appSettingsTable)
-    .where(eq(appSettingsTable.key, "style_assist:model"))
+    .where(eq(appSettingsTable.key, "style_assist:model"));
+  const [providerRow] = await db
+    .select({ value: appSettingsTable.value })
+    .from(appSettingsTable)
+    .where(eq(appSettingsTable.key, "style_assist:provider"))
     .limit(1);
   res.json({
     ...models,
-    styleAssistModel: row?.value.trim() || DEFAULT_STYLE_ASSIST_MODEL,
+    styleAssistProvider: providerRow?.value.trim() || DEFAULT_STYLE_ASSIST_PROVIDER,
+    styleAssistModel: rows[0]?.value.trim() || DEFAULT_STYLE_ASSIST_MODEL,
   });
 });
 
@@ -110,6 +121,7 @@ const SettingsSchema = z.object({
   styles: z.string().min(1).optional(),
   photoshoot: z.string().min(1).optional(),
   review: z.string().min(1).optional(),
+  styleAssistProvider: z.enum(["openrouter", "kie"]).optional(),
   styleAssistModel: z.string().min(1).optional(),
 });
 
@@ -140,9 +152,13 @@ router.patch("/admin/ai/settings", requireAuth, requireAdmin, async (req, res) =
   if (typeof parsed.data.styleAssistModel === "string") {
     await setSetting("style_assist:model", parsed.data.styleAssistModel);
   }
+  if (typeof parsed.data.styleAssistProvider === "string") {
+    await setSetting("style_assist:provider", parsed.data.styleAssistProvider);
+  }
   const models = await getAllCategoryModels();
   res.json({
     ...models,
+    styleAssistProvider: parsed.data.styleAssistProvider || DEFAULT_STYLE_ASSIST_PROVIDER,
     styleAssistModel: parsed.data.styleAssistModel || DEFAULT_STYLE_ASSIST_MODEL,
   });
 });

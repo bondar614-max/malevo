@@ -3,8 +3,8 @@ import { db, usersTable, ordersTable, stylesTable, tariffsTable, servicesTable, 
 import { eq, desc, sql } from "drizzle-orm";
 import { z } from "zod";
 import { hashPassword, requireAuth } from "../lib/auth";
-import { getOpenAIClientCandidates, styleAssistModel } from "../lib/openai";
-import { kieCreateNanoBananaProTask, kieGetTask, kieUploadFile } from "../lib/kie";
+import { DEFAULT_STYLE_ASSIST_MODEL, getOpenAIClientCandidates, styleAssistModel, styleAssistProvider } from "../lib/openai";
+import { kieCreateChatCompletion, kieCreateNanoBananaProTask, kieGetTask, kieUploadFile } from "../lib/kie";
 import { uploadBufferToStorage, downloadStorageObject } from "../lib/storage-helpers";
 
 const router: IRouter = Router();
@@ -323,28 +323,41 @@ router.post("/admin/styles/assist", async (req, res) => {
       },
       { role: "user" as const, content: idea },
     ];
-    const candidates = getOpenAIClientCandidates(await styleAssistModel());
-    let completion;
-    let lastErr: unknown = null;
-    for (let i = 0; i < candidates.length; i++) {
-      const candidate = candidates[i]!;
-      try {
-        completion = await candidate.client.chat.completions.create({
-          model: candidate.model,
-          response_format: { type: "json_object" },
-          messages,
-          max_completion_tokens: 1200,
-        });
-        if (i > 0) req.log.info({ source: candidate.source }, "assist text generation succeeded with fallback key");
-        break;
-      } catch (err) {
-        lastErr = err;
-        if (!isAuthProviderError(err) || i === candidates.length - 1) throw err;
-        req.log.warn({ source: candidate.source }, "assist key rejected; trying fallback key");
+    const selectedProvider = await styleAssistProvider();
+    const selectedModel = await styleAssistModel();
+    let raw = "";
+    if (selectedProvider === "kie") {
+      raw = await kieCreateChatCompletion({
+        model: selectedModel.startsWith("kie:") ? selectedModel : "kie:gpt-5-2",
+        messages,
+        maxCompletionTokens: 1200,
+      });
+    } else {
+      const candidates = getOpenAIClientCandidates(
+        selectedModel.startsWith("kie:") ? DEFAULT_STYLE_ASSIST_MODEL : selectedModel,
+      );
+      let completion;
+      let lastErr: unknown = null;
+      for (let i = 0; i < candidates.length; i++) {
+        const candidate = candidates[i]!;
+        try {
+          completion = await candidate.client.chat.completions.create({
+            model: candidate.model,
+            response_format: { type: "json_object" },
+            messages,
+            max_completion_tokens: 1200,
+          });
+          if (i > 0) req.log.info({ source: candidate.source }, "assist text generation succeeded with fallback key");
+          break;
+        } catch (err) {
+          lastErr = err;
+          if (!isAuthProviderError(err) || i === candidates.length - 1) throw err;
+          req.log.warn({ source: candidate.source }, "assist key rejected; trying fallback key");
+        }
       }
+      if (!completion) throw lastErr ?? new Error("AI provider returned no completion");
+      raw = completion.choices[0]?.message?.content ?? "";
     }
-    if (!completion) throw lastErr ?? new Error("AI provider returned no completion");
-    const raw = completion.choices[0]?.message?.content ?? "";
     const json = extractJsonObject(raw);
     const validated = AssistResultSchema.safeParse(json);
     if (!validated.success) {

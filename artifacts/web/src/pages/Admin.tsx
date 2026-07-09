@@ -1170,7 +1170,7 @@ function LocationEditor({ initial, onClose, onSaved }: { initial: LocationRow; o
 type GenProvider = "kie" | "openrouter";
 type AiModelCategory = "styles" | "photoshoot" | "review";
 interface ModelOption { id: string; name: string; provider: GenProvider; }
-interface AiSettings { styles: string; photoshoot: string; review: string; styleAssistModel: string; }
+interface AiSettings { styles: string; photoshoot: string; review: string; styleAssistProvider: GenProvider; styleAssistModel: string; }
 interface AiKeyDiagnostic {
   provider: "openrouter";
   source: string;
@@ -1221,7 +1221,11 @@ function AiModelsTab() {
         const tm = await apiFetch<ModelOption[]>("/admin/ai/text-models");
         setModels(m);
         setTextModels(tm);
-        setSettings({ ...s, styleAssistModel: s.styleAssistModel ?? "openai/gpt-4o-mini" });
+        setSettings({
+          ...s,
+          styleAssistProvider: s.styleAssistProvider ?? providerOf(s.styleAssistModel ?? "openai/gpt-4o-mini"),
+          styleAssistModel: s.styleAssistModel ?? "openai/gpt-4o-mini",
+        });
         setProviderByCat({
           styles: providerOf(s.styles),
           photoshoot: providerOf(s.photoshoot),
@@ -1334,9 +1338,39 @@ function AiModelsTab() {
               Эта модель заполняет название, описания, категорию и prompt в окне создания нового стиля.
             </div>
           </div>
+          <div className="grid grid-cols-2 gap-2 mb-4">
+            {PROVIDERS.map((p) => {
+              const active = (settings?.styleAssistProvider ?? "openrouter") === p.key;
+              return (
+                <button
+                  key={p.key}
+                  type="button"
+                  onClick={() => {
+                    const first = textModels.find((m) => m.provider === p.key);
+                    setSettings((s) => s ? {
+                      ...s,
+                      styleAssistProvider: p.key,
+                      styleAssistModel: first?.id ?? (p.key === "kie" ? "kie:gpt-5-2" : "openai/gpt-4o-mini"),
+                    } : s);
+                  }}
+                  className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                    active
+                      ? "border-primary bg-primary/10 text-white"
+                      : "border-border bg-secondary text-muted-foreground hover:border-primary/40"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold">{p.label}</span>
+                    {active && <Check size={15} className="text-primary shrink-0" />}
+                  </div>
+                  <div className="text-[11px] leading-tight mt-0.5">{p.desc}</div>
+                </button>
+              );
+            })}
+          </div>
           <ModelSelect
-            models={textModels}
-            value={settings?.styleAssistModel ?? "openai/gpt-4o-mini"}
+            models={textModels.filter((m) => m.provider === (settings?.styleAssistProvider ?? "openrouter"))}
+            value={settings?.styleAssistModel ?? ((settings?.styleAssistProvider ?? "openrouter") === "kie" ? "kie:gpt-5-2" : "openai/gpt-4o-mini")}
             onChange={(v) => setSettings((s) => (s ? { ...s, styleAssistModel: v } : s))}
           />
           <div className="mt-2 text-xs text-muted-foreground">
