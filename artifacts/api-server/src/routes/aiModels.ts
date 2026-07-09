@@ -11,7 +11,14 @@ import {
   type GenCategory,
 } from "../lib/imageGen";
 import { getApiKeyCandidates, getApiKeyStatus, setApiKey, type ApiKeyProvider } from "../lib/apiKeys";
-import { DEFAULT_STYLE_ASSIST_MODEL, DEFAULT_SUPPORT_MODEL, listOpenRouterTextModels, openRouterHeaders } from "../lib/openai";
+import {
+  DEFAULT_STYLE_ASSIST_MODEL,
+  DEFAULT_STYLE_ASSIST_PROVIDER,
+  DEFAULT_SUPPORT_MODEL,
+  KIE_TEXT_MODELS,
+  listOpenRouterTextModels,
+  openRouterHeaders,
+} from "../lib/openai";
 
 const router: IRouter = Router();
 const TRACKING_SETTINGS_KEY = "analytics:tracking";
@@ -109,7 +116,7 @@ router.patch("/admin/analytics/settings", requireAuth, requireAdmin, async (req,
 });
 
 router.get("/admin/ai/text-models", requireAuth, requireAdmin, async (_req, res) => {
-  res.json(await listOpenRouterTextModels());
+  res.json([...(await listOpenRouterTextModels()), ...KIE_TEXT_MODELS]);
 });
 
 router.get("/admin/ai/settings", requireAuth, requireAdmin, async (_req, res) => {
@@ -118,6 +125,7 @@ router.get("/admin/ai/settings", requireAuth, requireAdmin, async (_req, res) =>
   const map = new Map(rows.map((r) => [r.key, r.value] as const));
   res.json({
     ...models,
+    styleAssistProvider: map.get("style_assist:provider") || DEFAULT_STYLE_ASSIST_PROVIDER,
     styleAssistModel: map.get("style_assist:model") || DEFAULT_STYLE_ASSIST_MODEL,
     supportModel: map.get("support:model") || DEFAULT_SUPPORT_MODEL,
     supportInstructions: map.get("support:instructions") || "",
@@ -231,6 +239,7 @@ const SettingsSchema = z.object({
   photoshoot: z.string().min(1).optional(),
   review: z.string().min(1).optional(),
   supportModel: z.string().min(1).optional(),
+  styleAssistProvider: z.enum(["openrouter", "kie"]).optional(),
   styleAssistModel: z.string().min(1).optional(),
   supportInstructions: z.string().max(20000).optional(),
   supportInstructionFileName: z.string().max(255).optional(),
@@ -264,6 +273,9 @@ router.patch("/admin/ai/settings", requireAuth, requireAdmin, async (req, res) =
   if (typeof parsed.data.styleAssistModel === "string") {
     await setSetting("style_assist:model", parsed.data.styleAssistModel);
   }
+  if (typeof parsed.data.styleAssistProvider === "string") {
+    await setSetting("style_assist:provider", parsed.data.styleAssistProvider);
+  }
   if (typeof parsed.data.supportInstructions === "string") {
     await setSetting("support:instructions", parsed.data.supportInstructions);
   }
@@ -281,6 +293,7 @@ router.patch("/admin/ai/settings", requireAuth, requireAdmin, async (req, res) =
   const map = new Map(rows.map((r) => [r.key, r.value] as const));
   res.json({
     ...models,
+    styleAssistProvider: map.get("style_assist:provider") || DEFAULT_STYLE_ASSIST_PROVIDER,
     styleAssistModel: map.get("style_assist:model") || DEFAULT_STYLE_ASSIST_MODEL,
     supportModel: map.get("support:model") || DEFAULT_SUPPORT_MODEL,
     supportInstructions: map.get("support:instructions") || "",

@@ -25,6 +25,49 @@ export interface KieUploadResult {
   url: string;
 }
 
+export interface KieChatMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+export async function kieCreateChatCompletion(input: {
+  model: string;
+  messages: KieChatMessage[];
+  maxCompletionTokens?: number;
+}): Promise<string> {
+  const model = input.model.startsWith("kie:") ? input.model.slice("kie:".length) : input.model;
+  const res = await fetchWithTimeout(
+    `${KIE_BASE}/api/v1/${encodeURIComponent(model)}/v1/chat/completions`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${await apiKey()}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messages: input.messages,
+        response_format: { type: "json_object" },
+        max_completion_tokens: input.maxCompletionTokens ?? 1200,
+      }),
+    },
+    120_000,
+  );
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`kie chat failed: ${res.status} ${text.slice(0, 220)}`);
+  }
+  const json = JSON.parse(text) as {
+    choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>;
+  };
+  const content = json.choices?.[0]?.message?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.map((part) => part.text ?? "").join("").trim();
+  }
+  throw new Error("kie chat returned no text");
+}
+
 /**
  * Upload a file buffer to kie.ai temporary storage. Files are auto-deleted after 3 days.
  * Returns the public URL we can pass to model endpoints.

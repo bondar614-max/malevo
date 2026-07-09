@@ -1902,6 +1902,7 @@ interface AiSettings {
   styles: string;
   photoshoot: string;
   review: string;
+  styleAssistProvider: GenProvider;
   styleAssistModel: string;
   supportModel: string;
   supportInstructions: string;
@@ -1969,6 +1970,7 @@ function AiModelsTab() {
         setTextModels(supportTextModels);
         setSettings({
           ...settingsData,
+          styleAssistProvider: settingsData.styleAssistProvider ?? providerOf(settingsData.styleAssistModel ?? "openai/gpt-4o-mini"),
           styleAssistModel: settingsData.styleAssistModel ?? "openai/gpt-4o-mini",
           supportModel: settingsData.supportModel ?? "openai/gpt-4o-mini",
           supportInstructions: settingsData.supportInstructions ?? "",
@@ -2162,10 +2164,40 @@ function AiModelsTab() {
               Эта модель заполняет название, описания, категорию и prompt в окне создания нового стиля.
             </div>
           </div>
-          <Field label="Модель OpenRouter/OpenAI для текстов">
+          <div className="grid grid-cols-2 gap-2 mb-4">
+            {PROVIDERS.map((p) => {
+              const active = (settings?.styleAssistProvider ?? "openrouter") === p.key;
+              return (
+                <button
+                  key={p.key}
+                  type="button"
+                  onClick={() => {
+                    const first = textModels.find((m) => m.provider === p.key);
+                    setSettings((s) => s ? {
+                      ...s,
+                      styleAssistProvider: p.key,
+                      styleAssistModel: first?.id ?? (p.key === "kie" ? "kie:gpt-5-2" : "openai/gpt-4o-mini"),
+                    } : s);
+                  }}
+                  className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                    active
+                      ? "border-primary bg-primary/10 text-white"
+                      : "border-border bg-secondary text-muted-foreground hover:border-primary/40"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold">{p.label}</span>
+                    {active && <Check size={15} className="text-primary shrink-0" />}
+                  </div>
+                  <div className="text-[11px] leading-tight mt-0.5">{p.desc}</div>
+                </button>
+              );
+            })}
+          </div>
+          <Field label="Модель для текстов">
             <ModelSelect
-              models={textModels}
-              value={settings?.styleAssistModel ?? "openai/gpt-4o-mini"}
+              models={textModels.filter((m) => m.provider === (settings?.styleAssistProvider ?? "openrouter"))}
+              value={settings?.styleAssistModel ?? ((settings?.styleAssistProvider ?? "openrouter") === "kie" ? "kie:gpt-5-2" : "openai/gpt-4o-mini")}
               onChange={(v) => setSettings((s) => (s ? { ...s, styleAssistModel: v } : s))}
             />
           </Field>
@@ -2211,7 +2243,7 @@ function AiModelsTab() {
             <div className="mt-4">
               <Field label="Vision-модель для проверки">
                 <ModelSelect
-                  models={textModels}
+                  models={textModels.filter((m) => m.provider === "openrouter")}
                   value={settings.photoshootVisionModel}
                   onChange={(v) => setSettings((s) => s ? { ...s, photoshootVisionModel: v } : s)}
                 />
@@ -2230,7 +2262,7 @@ function AiModelsTab() {
           <div className="space-y-4">
             <Field label="Модель OpenRouter для поддержки">
               <ModelSelect
-                models={textModels}
+                models={textModels.filter((m) => m.provider === "openrouter")}
                 value={settings?.supportModel ?? "openai/gpt-4o-mini"}
                 onChange={(v) => setSettings((s) => (s ? { ...s, supportModel: v } : s))}
               />

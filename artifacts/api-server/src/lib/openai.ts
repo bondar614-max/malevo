@@ -6,6 +6,9 @@ import { eq } from "drizzle-orm";
 let client: OpenAI | null = null;
 export const DEFAULT_SUPPORT_MODEL = "openai/gpt-4o-mini";
 export const DEFAULT_STYLE_ASSIST_MODEL = "openai/gpt-4o-mini";
+export const DEFAULT_STYLE_ASSIST_PROVIDER = "openrouter";
+
+export type TextProvider = "openrouter" | "kie";
 
 /** OpenRouter keys start with `sk-or-`; they require OpenRouter's base URL. */
 function isOpenRouterKey(key: string): boolean {
@@ -26,6 +29,15 @@ export async function styleAssistModel(): Promise<string> {
   return row?.value.trim() || DEFAULT_STYLE_ASSIST_MODEL;
 }
 
+export async function styleAssistProvider(): Promise<TextProvider> {
+  const [row] = await db
+    .select()
+    .from(appSettingsTable)
+    .where(eq(appSettingsTable.key, "style_assist:provider"))
+    .limit(1);
+  return row?.value.trim() === "kie" ? "kie" : "openrouter";
+}
+
 export async function supportModel(): Promise<string> {
   const [row] = await db
     .select()
@@ -38,7 +50,7 @@ export async function supportModel(): Promise<string> {
 export interface TextModelOption {
   id: string;
   name: string;
-  provider: "openrouter";
+  provider: TextProvider;
 }
 
 export interface OpenAIClientCandidate {
@@ -57,12 +69,43 @@ export function openRouterHeaders(key: string): Record<string, string> {
   };
 }
 
+const OPENROUTER_TEXT_FALLBACK_MODELS: TextModelOption[] = [
+  { id: "openai/gpt-4o-mini", name: "OpenAI GPT-4o mini", provider: "openrouter" },
+  { id: "openai/gpt-4o", name: "OpenAI GPT-4o", provider: "openrouter" },
+  { id: "openai/gpt-5.2", name: "OpenAI GPT-5.2", provider: "openrouter" },
+  { id: "openai/gpt-5.1", name: "OpenAI GPT-5.1", provider: "openrouter" },
+  { id: "anthropic/claude-sonnet-4.5", name: "Claude Sonnet 4.5", provider: "openrouter" },
+  { id: "anthropic/claude-opus-4.5", name: "Claude Opus 4.5", provider: "openrouter" },
+  { id: "google/gemini-3-pro", name: "Google Gemini 3 Pro", provider: "openrouter" },
+  { id: "google/gemini-2.5-pro", name: "Google Gemini 2.5 Pro", provider: "openrouter" },
+  { id: "google/gemini-2.5-flash", name: "Google Gemini 2.5 Flash", provider: "openrouter" },
+  { id: "x-ai/grok-4", name: "xAI Grok 4", provider: "openrouter" },
+  { id: "deepseek/deepseek-chat", name: "DeepSeek Chat", provider: "openrouter" },
+  { id: "deepseek/deepseek-r1", name: "DeepSeek R1", provider: "openrouter" },
+  { id: "qwen/qwen3-max", name: "Qwen3 Max", provider: "openrouter" },
+  { id: "qwen/qwen3-coder", name: "Qwen3 Coder", provider: "openrouter" },
+  { id: "meta-llama/llama-4-maverick", name: "Llama 4 Maverick", provider: "openrouter" },
+  { id: "mistralai/mistral-large", name: "Mistral Large", provider: "openrouter" },
+];
+
+export const KIE_TEXT_MODELS: TextModelOption[] = [
+  { id: "kie:gpt-5-2", name: "GPT-5.2 (KIE)", provider: "kie" },
+];
+
+function mergeTextModels(primary: TextModelOption[], fallback: TextModelOption[]): TextModelOption[] {
+  const seen = new Set<string>();
+  const out: TextModelOption[] = [];
+  for (const model of [...primary, ...fallback]) {
+    if (seen.has(model.id)) continue;
+    seen.add(model.id);
+    out.push(model);
+  }
+  return out;
+}
+
 export async function listOpenRouterTextModels(): Promise<TextModelOption[]> {
-  const fallback: TextModelOption[] = [
-    { id: DEFAULT_SUPPORT_MODEL, name: "GPT-4o mini", provider: "openrouter" },
-  ];
   const key = await getApiKey("openrouter");
-  if (!key) return fallback;
+  if (!key) return mergeTextModels([], OPENROUTER_TEXT_FALLBACK_MODELS);
   try {
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), 30_000);
@@ -71,7 +114,7 @@ export async function listOpenRouterTextModels(): Promise<TextModelOption[]> {
       signal: ac.signal,
     });
     clearTimeout(t);
-    if (!res.ok) return fallback;
+    if (!res.ok) return mergeTextModels([], OPENROUTER_TEXT_FALLBACK_MODELS);
     const json = (await res.json()) as {
       data?: Array<{ id: string; name?: string; architecture?: { output_modalities?: string[] } }>;
     };
@@ -82,9 +125,9 @@ export async function listOpenRouterTextModels(): Promise<TextModelOption[]> {
       })
       .map((m) => ({ id: m.id, name: m.name ?? m.id, provider: "openrouter" as const }))
       .sort((a, b) => a.name.localeCompare(b.name));
-    return models.some((m) => m.id === DEFAULT_SUPPORT_MODEL) ? models : [...fallback, ...models];
+    return mergeTextModels(models, OPENROUTER_TEXT_FALLBACK_MODELS);
   } catch {
-    return fallback;
+    return mergeTextModels([], OPENROUTER_TEXT_FALLBACK_MODELS);
   }
 }
 
