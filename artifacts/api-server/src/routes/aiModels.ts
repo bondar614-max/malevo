@@ -10,7 +10,7 @@ import {
   setCategoryModel,
   type GenCategory,
 } from "../lib/imageGen";
-import { getApiKeyStatus, setApiKey } from "../lib/apiKeys";
+import { getApiKeyCandidates, getApiKeyStatus, setApiKey, type ApiKeyProvider } from "../lib/apiKeys";
 import { DEFAULT_SUPPORT_MODEL, listOpenRouterTextModels } from "../lib/openai";
 
 const router: IRouter = Router();
@@ -128,6 +128,81 @@ router.get("/admin/ai/settings", requireAuth, requireAdmin, async (_req, res) =>
 
 router.get("/admin/ai/keys", requireAuth, requireAdmin, async (_req, res) => {
   res.json(await getApiKeyStatus());
+});
+
+function keyFingerprint(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= 12) return `${trimmed.length} chars`;
+  return `${trimmed.slice(0, 7)}...${trimmed.slice(-4)} (${trimmed.length} chars)`;
+}
+
+async function checkOpenRouterKey(value: string): Promise<{ ok: boolean; status?: number; message: string }> {
+  try {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 20_000);
+    const response = await fetch("https://openrouter.ai/api/v1/key", {
+      headers: { Authorization: `Bearer ${value}` },
+      signal: ac.signal,
+    });
+    clearTimeout(t);
+    const text = await response.text().catch(() => "");
+    if (response.ok) return { ok: true, status: response.status, message: "OpenRouter принял ключ" };
+    let message = text.slice(0, 220);
+    try {
+      const json = JSON.parse(text) as { error?: { message?: string }; message?: string };
+      message = json.error?.message ?? json.message ?? message;
+    } catch { /* keep raw response */ }
+    return { ok: false, status: response.status, message: message || response.statusText };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : "Не удалось проверить ключ" };
+  }
+}
+
+router.get("/admin/ai/key-diagnostics", requireAuth, requireAdmin, async (_req, res) => {
+  const providers: ApiKeyProvider[] = ["openrouter", "kie"];
+  const rows: Array<{
+    provider: ApiKeyProvider;
+    source: string;
+    fingerprint: string;
+    ok: boolean | null;
+    status?: number;
+    message: string;
+  }> = [];
+
+  for (const provider of providers) {
+    const candidates = await getApiKeyCandidates(provider);
+    if (candidates.length === 0) {
+      rows.push({
+        provider,
+        source: "none",
+        fingerprint: "",
+        ok: false,
+        message: "Ключ не найден ни в базе, ни в env",
+      });
+      continue;
+    }
+    for (const candidate of candidates) {
+      if (provider === "openrouter") {
+        const check = await checkOpenRouterKey(candidate.value);
+        rows.push({
+          provider,
+          source: `${candidate.source}:${candidate.name}`,
+          fingerprint: keyFingerprint(candidate.value),
+          ...check,
+        });
+      } else {
+        rows.push({
+          provider,
+          source: `${candidate.source}:${candidate.name}`,
+          fingerprint: keyFingerprint(candidate.value),
+          ok: null,
+          message: "KIE-ключ найден; безопасная онлайн-проверка не выполнялась",
+        });
+      }
+    }
+  }
+
+  res.json(rows);
 });
 
 const KeysSchema = z.object({
