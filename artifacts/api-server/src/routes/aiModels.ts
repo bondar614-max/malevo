@@ -18,6 +18,29 @@ import {
 } from "../lib/openai";
 
 const router: IRouter = Router();
+const EXIT_PROMO_SETTINGS_KEY = "promo:exit_intent";
+
+interface ExitPromoSettings {
+  enabled: boolean;
+  title: string;
+  body: string;
+  offer: string;
+  couponCode: string;
+  buttonText: string;
+  buttonUrl: string;
+  imageUrl: string;
+}
+
+const DEFAULT_EXIT_PROMO_SETTINGS: ExitPromoSettings = {
+  enabled: false,
+  title: "Не уходите без подарка",
+  body: "Попробуйте фотоотзывы бесплатно и посмотрите, как товар выглядит в реальной пользовательской сцене.",
+  offer: "Купон на бесплатные генерации фотоотзывов",
+  couponCode: "REVIEWFREE",
+  buttonText: "Забрать купон",
+  buttonUrl: "/photo",
+  imageUrl: "",
+};
 
 async function requireAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!req.auth) { res.status(401).json({ error: "Unauthorized" }); return; }
@@ -28,6 +51,65 @@ async function requireAdmin(req: Request, res: Response, next: NextFunction): Pr
 
 router.get("/admin/ai/models", requireAuth, requireAdmin, async (_req, res) => {
   res.json(await listImageModels());
+});
+
+function normalizeExitPromoSettings(value: string | undefined): ExitPromoSettings {
+  if (!value) return DEFAULT_EXIT_PROMO_SETTINGS;
+  try {
+    const parsed = JSON.parse(value) as Partial<ExitPromoSettings>;
+    return {
+      enabled: Boolean(parsed.enabled),
+      title: typeof parsed.title === "string" ? parsed.title : DEFAULT_EXIT_PROMO_SETTINGS.title,
+      body: typeof parsed.body === "string" ? parsed.body : DEFAULT_EXIT_PROMO_SETTINGS.body,
+      offer: typeof parsed.offer === "string" ? parsed.offer : DEFAULT_EXIT_PROMO_SETTINGS.offer,
+      couponCode: typeof parsed.couponCode === "string" ? parsed.couponCode : DEFAULT_EXIT_PROMO_SETTINGS.couponCode,
+      buttonText: typeof parsed.buttonText === "string" ? parsed.buttonText : DEFAULT_EXIT_PROMO_SETTINGS.buttonText,
+      buttonUrl: typeof parsed.buttonUrl === "string" ? parsed.buttonUrl : DEFAULT_EXIT_PROMO_SETTINGS.buttonUrl,
+      imageUrl: typeof parsed.imageUrl === "string" ? parsed.imageUrl : "",
+    };
+  } catch {
+    return DEFAULT_EXIT_PROMO_SETTINGS;
+  }
+}
+
+async function getExitPromoSettings(): Promise<ExitPromoSettings> {
+  const [row] = await db
+    .select({ value: appSettingsTable.value })
+    .from(appSettingsTable)
+    .where(eq(appSettingsTable.key, EXIT_PROMO_SETTINGS_KEY))
+    .limit(1);
+  return normalizeExitPromoSettings(row?.value);
+}
+
+router.get("/promo/exit-intent", async (_req, res) => {
+  const settings = await getExitPromoSettings();
+  res.json(settings.enabled ? settings : { ...DEFAULT_EXIT_PROMO_SETTINGS, enabled: false });
+});
+
+router.get("/admin/promo/exit-intent", requireAuth, requireAdmin, async (_req, res) => {
+  res.json(await getExitPromoSettings());
+});
+
+const ExitPromoSettingsSchema = z.object({
+  enabled: z.boolean(),
+  title: z.string().trim().min(1).max(120),
+  body: z.string().trim().min(1).max(600),
+  offer: z.string().trim().max(200),
+  couponCode: z.string().trim().max(64),
+  buttonText: z.string().trim().min(1).max(80),
+  buttonUrl: z.string().trim().min(1).max(300),
+  imageUrl: z.string().trim().max(1000),
+});
+
+router.patch("/admin/promo/exit-intent", requireAuth, requireAdmin, async (req, res) => {
+  const parsed = ExitPromoSettingsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid body", details: parsed.error.message });
+    return;
+  }
+  const settings: ExitPromoSettings = parsed.data;
+  await setSetting(EXIT_PROMO_SETTINGS_KEY, JSON.stringify(settings));
+  res.json(settings);
 });
 
 router.get("/admin/ai/text-models", requireAuth, requireAdmin, async (_req, res) => {

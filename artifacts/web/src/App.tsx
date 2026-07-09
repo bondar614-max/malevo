@@ -13,6 +13,7 @@ import AdminLogin from "@/pages/AdminLogin";
 import Account from "@/pages/Account";
 import { AuthProvider } from "@/lib/auth";
 import { AuthModalProvider } from "@/components/auth/AuthModal";
+import { ExitIntentPromo } from "@/components/ExitIntentPromo";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -59,6 +60,7 @@ function App() {
             <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
               <ScrollToTop />
               <Router />
+              <ExitIntentPromo />
             </WouterRouter>
             <Toaster />
           </TooltipProvider>
