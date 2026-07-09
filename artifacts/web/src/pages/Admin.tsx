@@ -5,9 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { apiFetch, clearAuth, getStoredUser, getToken } from "@/lib/admin-api";
-import { LogOut, Users, ImageIcon, Tag, Layers, Pencil, Trash2, Plus, X, Shield, Upload, Loader2, Sparkles, MapPin, Cpu, Search, Check, LifeBuoy, Reply, BarChart3, CreditCard } from "lucide-react";
+import { LogOut, Users, ImageIcon, Tag, Layers, Pencil, Trash2, Plus, X, Shield, Upload, Loader2, Sparkles, MapPin, Cpu, Search, Check, LifeBuoy, Reply, BarChart3, CreditCard, Megaphone } from "lucide-react";
 
-type Tab = "users" | "orders" | "support" | "payments" | "tariffs" | "styles" | "services" | "locations" | "landing" | "analytics" | "ai";
+type Tab = "users" | "orders" | "support" | "payments" | "tariffs" | "styles" | "services" | "locations" | "landing" | "promo" | "analytics" | "ai";
 
 interface UserRow {
   id: string; email: string; name: string; role: string; isBlocked: boolean;
@@ -99,6 +99,7 @@ export default function Admin() {
     { id: "services", label: "Услуги", icon: Sparkles },
     { id: "locations", label: "Локации", icon: MapPin },
     { id: "landing", label: "Лендинг", icon: ImageIcon },
+    { id: "promo", label: "Промо", icon: Megaphone },
     { id: "analytics", label: "Метрики", icon: BarChart3 },
     { id: "ai", label: "ИИ-модели", icon: Cpu },
   ];
@@ -152,6 +153,7 @@ export default function Admin() {
           {tab === "services" && <ServicesTab />}
           {tab === "locations" && <LocationsTab />}
           {tab === "landing" && <LandingTab />}
+          {tab === "promo" && <PromoTab />}
           {tab === "analytics" && <AnalyticsTab />}
           {tab === "ai" && <AiModelsTab />}
         </div>
@@ -1716,6 +1718,172 @@ function LocationEditor({ initial, onClose, onSaved }: { initial: LocationRow; o
             {saving ? "..." : "Сохранить"}
           </Button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ===== Promo Tab =====
+interface ExitPromoSettings {
+  enabled: boolean;
+  title: string;
+  body: string;
+  offer: string;
+  couponCode: string;
+  buttonText: string;
+  buttonUrl: string;
+  imageUrl: string;
+}
+
+const DEFAULT_EXIT_PROMO_SETTINGS: ExitPromoSettings = {
+  enabled: false,
+  title: "Не уходите без подарка",
+  body: "Попробуйте фотоотзывы бесплатно и посмотрите, как товар выглядит в реальной пользовательской сцене.",
+  offer: "Купон на бесплатные генерации фотоотзывов",
+  couponCode: "REVIEWFREE",
+  buttonText: "Забрать купон",
+  buttonUrl: "/photo",
+  imageUrl: "",
+};
+
+function PromoTab() {
+  const [settings, setSettings] = useState<ExitPromoSettings>(DEFAULT_EXIT_PROMO_SETTINGS);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setErr("");
+    try {
+      setSettings(await apiFetch<ExitPromoSettings>("/admin/promo/exit-intent"));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Ошибка загрузки");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  function upd<K extends keyof ExitPromoSettings>(key: K, value: ExitPromoSettings[K]) {
+    setSettings((s) => ({ ...s, [key]: value }));
+  }
+
+  async function save() {
+    setSaving(true);
+    setErr("");
+    setOk(false);
+    try {
+      const updated = await apiFetch<ExitPromoSettings>("/admin/promo/exit-intent", {
+        method: "PATCH",
+        body: JSON.stringify(settings),
+      });
+      setSettings(updated);
+      setOk(true);
+      setTimeout(() => setOk(false), 2500);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Ошибка сохранения");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="animate-spin" size={18} /> Загрузка промо…</div>;
+  }
+
+  return (
+    <div>
+      <div className="mb-6">
+        <h2 className="text-3xl font-bold text-white">Промо</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          Всплывающее предложение показывается один раз за сессию, когда посетитель уводит курсор к закрытию вкладки.
+        </p>
+      </div>
+
+      {err && <div className="text-sm rounded-lg p-3 border text-red-400 bg-red-500/10 border-red-500/30 mb-4">{err}</div>}
+
+      <div className="grid xl:grid-cols-[1fr_420px] gap-5">
+        <div className="space-y-5">
+          <div className="bg-card border border-border rounded-xl p-5">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.enabled}
+                onChange={(e) => upd("enabled", e.target.checked)}
+                className="mt-1"
+              />
+              <span>
+                <span className="block font-semibold text-white">Показывать exit popup</span>
+                <span className="block text-xs text-muted-foreground mt-0.5">
+                  Если выключено, публичный сайт не загружает и не показывает рекламное окно.
+                </span>
+              </span>
+            </label>
+          </div>
+
+          <div className="bg-card border border-border rounded-xl p-5 space-y-4">
+            <Field label="Заголовок">
+              <Input value={settings.title} onChange={(e) => upd("title", e.target.value)} className="bg-secondary border-border text-white" />
+            </Field>
+            <Field label="Описание">
+              <Textarea value={settings.body} onChange={(e) => upd("body", e.target.value)} rows={4} className="bg-secondary border-border text-white" />
+            </Field>
+            <Field label="Предложение">
+              <Input value={settings.offer} onChange={(e) => upd("offer", e.target.value)} className="bg-secondary border-border text-white" />
+            </Field>
+            <div className="grid md:grid-cols-2 gap-4">
+              <Field label="Купон">
+                <Input value={settings.couponCode} onChange={(e) => upd("couponCode", e.target.value)} className="bg-secondary border-border text-white font-mono" />
+              </Field>
+              <Field label="Текст кнопки">
+                <Input value={settings.buttonText} onChange={(e) => upd("buttonText", e.target.value)} className="bg-secondary border-border text-white" />
+              </Field>
+            </div>
+            <Field label="Ссылка кнопки">
+              <Input value={settings.buttonUrl} onChange={(e) => upd("buttonUrl", e.target.value)} placeholder="/photo" className="bg-secondary border-border text-white" />
+            </Field>
+          </div>
+
+          <div className="bg-card border border-border rounded-xl p-5">
+            <Field label="Фото в попапе">
+              <PreviewUploader value={settings.imageUrl} onChange={(url) => upd("imageUrl", url)} />
+            </Field>
+          </div>
+        </div>
+
+        <div className="bg-card border border-border rounded-xl p-5 h-fit">
+          <div className="text-sm font-semibold text-white mb-3">Превью</div>
+          <div className="overflow-hidden rounded-xl border border-border bg-[#141416]">
+            <div className="h-44 bg-secondary">
+              {settings.imageUrl ? (
+                <img src={settings.imageUrl} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <div className="h-full w-full bg-gradient-primary flex items-center justify-center">
+                  <Megaphone size={54} className="text-white" />
+                </div>
+              )}
+            </div>
+            <div className="p-5">
+              {settings.offer && <div className="mb-3 text-xs font-semibold text-[#C4B5FD]">{settings.offer}</div>}
+              <div className="text-2xl font-bold text-white leading-tight">{settings.title}</div>
+              <div className="mt-3 text-sm text-muted-foreground leading-6">{settings.body}</div>
+              {settings.couponCode && <div className="mt-4 font-mono text-white">{settings.couponCode}</div>}
+              <div className="mt-4 inline-flex h-10 items-center rounded-lg bg-gradient-primary px-4 text-sm font-bold text-white">
+                {settings.buttonText}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-6 flex items-center gap-3">
+        <Button onClick={save} disabled={saving} className="bg-gradient-primary text-white border-0">
+          {saving ? "..." : "Сохранить"}
+        </Button>
+        {ok && <span className="text-sm text-green-400 flex items-center gap-1"><Check size={16} /> Сохранено</span>}
       </div>
     </div>
   );

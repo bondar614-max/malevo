@@ -16,6 +16,7 @@ import { AuthProvider } from "@/lib/auth";
 import { AuthModalProvider } from "@/components/auth/AuthModal";
 import { SupportWidget } from "@/components/support/SupportWidget";
 import { AnalyticsScripts } from "@/components/AnalyticsScripts";
+import { ExitIntentPromo } from "@/components/ExitIntentPromo";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -87,6 +88,7 @@ function App() {
               <ScrollToTop />
               <AnalyticsScripts />
               <Router />
+              <ExitIntentPromo />
               <SupportWidget />
             </WouterRouter>
             <Toaster />
