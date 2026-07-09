@@ -27,6 +27,71 @@ router.get("/admin/ai/settings", requireAuth, requireAdmin, async (_req, res) =>
   res.json(await getAllCategoryModels());
 });
 
+function keyCandidates(): Array<{ provider: "openrouter"; source: string; value: string }> {
+  const out: Array<{ provider: "openrouter"; source: string; value: string }> = [];
+  for (const name of ["OPENROUTER_API_KEY", "OPENAI_API_KEY"]) {
+    const value = process.env[name]?.trim() ?? "";
+    if (value && !out.some((candidate) => candidate.value === value)) {
+      out.push({ provider: "openrouter", source: `env:${name}`, value });
+    }
+  }
+  return out;
+}
+
+function keyFingerprint(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= 12) return `${trimmed.length} chars`;
+  return `${trimmed.slice(0, 7)}...${trimmed.slice(-4)} (${trimmed.length} chars)`;
+}
+
+async function checkOpenRouterKey(value: string): Promise<{ ok: boolean; status?: number; message: string }> {
+  try {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 20_000);
+    const response = await fetch("https://openrouter.ai/api/v1/key", {
+      headers: { Authorization: `Bearer ${value}` },
+      signal: ac.signal,
+    });
+    clearTimeout(t);
+    const text = await response.text().catch(() => "");
+    if (response.ok) return { ok: true, status: response.status, message: "OpenRouter принял ключ" };
+    let message = text.slice(0, 220);
+    try {
+      const json = JSON.parse(text) as { error?: { message?: string }; message?: string };
+      message = json.error?.message ?? json.message ?? message;
+    } catch { /* keep raw response */ }
+    return { ok: false, status: response.status, message: message || response.statusText };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : "Не удалось проверить ключ" };
+  }
+}
+
+router.get("/admin/ai/key-diagnostics", requireAuth, requireAdmin, async (_req, res) => {
+  const candidates = keyCandidates();
+  if (candidates.length === 0) {
+    res.json([
+      {
+        provider: "openrouter",
+        source: "none",
+        fingerprint: "",
+        ok: false,
+        message: "Ключ не найден в OPENROUTER_API_KEY или OPENAI_API_KEY",
+      },
+    ]);
+    return;
+  }
+  const rows = [];
+  for (const candidate of candidates) {
+    rows.push({
+      provider: candidate.provider,
+      source: candidate.source,
+      fingerprint: keyFingerprint(candidate.value),
+      ...(await checkOpenRouterKey(candidate.value)),
+    });
+  }
+  res.json(rows);
+});
+
 const SettingsSchema = z.object({
   styles: z.string().min(1).optional(),
   photoshoot: z.string().min(1).optional(),

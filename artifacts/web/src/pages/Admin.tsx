@@ -1170,6 +1170,14 @@ function LocationEditor({ initial, onClose, onSaved }: { initial: LocationRow; o
 type GenProvider = "kie" | "openrouter";
 interface ModelOption { id: string; name: string; provider: GenProvider; }
 interface AiSettings { styles: string; photoshoot: string; review: string; }
+interface AiKeyDiagnostic {
+  provider: "openrouter";
+  source: string;
+  fingerprint: string;
+  ok: boolean;
+  status?: number;
+  message: string;
+}
 
 const AI_CATEGORIES: Array<{ key: keyof AiSettings; label: string; desc: string }> = [
   { key: "styles", label: "Стили", desc: "Модель для генерации стилей" },
@@ -1191,6 +1199,8 @@ function AiModelsTab() {
   const [settings, setSettings] = useState<AiSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [checkingKeys, setCheckingKeys] = useState(false);
+  const [keyDiagnostics, setKeyDiagnostics] = useState<AiKeyDiagnostic[]>([]);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState(false);
   const [providerByCat, setProviderByCat] = useState<Record<keyof AiSettings, GenProvider>>({
@@ -1241,6 +1251,18 @@ function AiModelsTab() {
     }
   }
 
+  async function checkKeys() {
+    setCheckingKeys(true);
+    setErr("");
+    try {
+      setKeyDiagnostics(await apiFetch<AiKeyDiagnostic[]>("/admin/ai/key-diagnostics"));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Не удалось проверить ключи");
+    } finally {
+      setCheckingKeys(false);
+    }
+  }
+
   if (loading) {
     return <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="animate-spin" size={18} /> Загрузка моделей…</div>;
   }
@@ -1257,6 +1279,50 @@ function AiModelsTab() {
       {err && <div className="text-sm rounded-lg p-3 border text-red-400 bg-red-500/10 border-red-500/30 mb-4">{err}</div>}
 
       <div className="space-y-5 max-w-2xl">
+        <div className="bg-card border border-border rounded-xl p-5">
+          <div className="mb-4">
+            <div className="font-semibold text-white">Проверка API-ключей</div>
+            <div className="text-xs text-muted-foreground">
+              Сервер проверит OPENROUTER_API_KEY и OPENAI_API_KEY без показа полного секрета.
+            </div>
+          </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <Button type="button" variant="outline" onClick={checkKeys} disabled={checkingKeys}>
+              {checkingKeys ? <Loader2 size={16} className="mr-2 animate-spin" /> : <Shield size={16} className="mr-2" />}
+              Проверить ключи
+            </Button>
+            {keyDiagnostics.length > 0 && (
+              <span className="text-xs text-muted-foreground">
+                Проверено источников: {keyDiagnostics.length}
+              </span>
+            )}
+          </div>
+          {keyDiagnostics.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {keyDiagnostics.map((item, index) => (
+                <div
+                  key={`${item.source}-${index}`}
+                  className={`rounded-lg border px-3 py-2 text-xs ${
+                    item.ok
+                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                      : "border-red-500/30 bg-red-500/10 text-red-300"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-semibold">{item.provider} · {item.source}</span>
+                    <span>{item.status ? `HTTP ${item.status}` : "без ответа"}</span>
+                  </div>
+                  <div className="mt-1 break-words">
+                    {item.fingerprint && <span className="font-mono">{item.fingerprint}</span>}
+                    {item.fingerprint && " · "}
+                    {item.message}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {AI_CATEGORIES.map((cat) => {
           const value = settings?.[cat.key] ?? "";
           const provider = providerByCat[cat.key];
