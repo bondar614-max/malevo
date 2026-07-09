@@ -11,7 +11,7 @@ import {
   type GenCategory,
 } from "../lib/imageGen";
 import { getApiKeyCandidates, getApiKeyStatus, setApiKey, type ApiKeyProvider } from "../lib/apiKeys";
-import { DEFAULT_SUPPORT_MODEL, listOpenRouterTextModels } from "../lib/openai";
+import { DEFAULT_SUPPORT_MODEL, listOpenRouterTextModels, openRouterHeaders } from "../lib/openai";
 
 const router: IRouter = Router();
 const TRACKING_SETTINGS_KEY = "analytics:tracking";
@@ -141,7 +141,7 @@ async function checkOpenRouterKey(value: string): Promise<{ ok: boolean; status?
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), 20_000);
     const response = await fetch("https://openrouter.ai/api/v1/key", {
-      headers: { Authorization: `Bearer ${value}` },
+      headers: openRouterHeaders(value),
       signal: ac.signal,
     });
     clearTimeout(t);

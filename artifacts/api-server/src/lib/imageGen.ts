@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { kieUploadFile, kieCreateNanoBananaProTask, kieGetTask } from "./kie";
 import { logger } from "./logger";
 import { getApiKey } from "./apiKeys";
+import { openRouterHeaders } from "./openai";
 
 export type GenCategory = "styles" | "photoshoot" | "review";
 
@@ -97,7 +98,7 @@ export async function listImageModels(): Promise<ModelOption[]> {
   try {
     const res = await fetchWithTimeout(
       "https://openrouter.ai/api/v1/models",
-      { headers: { Authorization: `Bearer ${key}` } },
+      { headers: openRouterHeaders(key) },
       30_000,
     );
     if (!res.ok) {
@@ -297,7 +298,7 @@ async function generateViaOpenRouter(opts: GenerateOpts): Promise<GenImage[]> {
     "https://openrouter.ai/api/v1/chat/completions",
     {
       method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      headers: { ...openRouterHeaders(key), "Content-Type": "application/json" },
       body: JSON.stringify({
         model: opts.model,
         messages: [{ role: "user", content }],
