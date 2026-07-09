@@ -11,7 +11,7 @@ import {
   type GenCategory,
 } from "../lib/imageGen";
 import { getApiKeyCandidates, getApiKeyStatus, setApiKey, type ApiKeyProvider } from "../lib/apiKeys";
-import { DEFAULT_SUPPORT_MODEL, listOpenRouterTextModels, openRouterHeaders } from "../lib/openai";
+import { DEFAULT_STYLE_ASSIST_MODEL, DEFAULT_SUPPORT_MODEL, listOpenRouterTextModels, openRouterHeaders } from "../lib/openai";
 
 const router: IRouter = Router();
 const TRACKING_SETTINGS_KEY = "analytics:tracking";
@@ -118,6 +118,7 @@ router.get("/admin/ai/settings", requireAuth, requireAdmin, async (_req, res) =>
   const map = new Map(rows.map((r) => [r.key, r.value] as const));
   res.json({
     ...models,
+    styleAssistModel: map.get("style_assist:model") || DEFAULT_STYLE_ASSIST_MODEL,
     supportModel: map.get("support:model") || DEFAULT_SUPPORT_MODEL,
     supportInstructions: map.get("support:instructions") || "",
     supportInstructionFileName: map.get("support:instruction_file_name") || "",
@@ -230,6 +231,7 @@ const SettingsSchema = z.object({
   photoshoot: z.string().min(1).optional(),
   review: z.string().min(1).optional(),
   supportModel: z.string().min(1).optional(),
+  styleAssistModel: z.string().min(1).optional(),
   supportInstructions: z.string().max(20000).optional(),
   supportInstructionFileName: z.string().max(255).optional(),
   photoshootApprovalMode: z.enum(["manual", "automatic"]).optional(),
@@ -259,6 +261,9 @@ router.patch("/admin/ai/settings", requireAuth, requireAdmin, async (req, res) =
   if (typeof parsed.data.supportModel === "string") {
     await setSetting("support:model", parsed.data.supportModel);
   }
+  if (typeof parsed.data.styleAssistModel === "string") {
+    await setSetting("style_assist:model", parsed.data.styleAssistModel);
+  }
   if (typeof parsed.data.supportInstructions === "string") {
     await setSetting("support:instructions", parsed.data.supportInstructions);
   }
@@ -276,6 +281,7 @@ router.patch("/admin/ai/settings", requireAuth, requireAdmin, async (req, res) =
   const map = new Map(rows.map((r) => [r.key, r.value] as const));
   res.json({
     ...models,
+    styleAssistModel: map.get("style_assist:model") || DEFAULT_STYLE_ASSIST_MODEL,
     supportModel: map.get("support:model") || DEFAULT_SUPPORT_MODEL,
     supportInstructions: map.get("support:instructions") || "",
     supportInstructionFileName: map.get("support:instruction_file_name") || "",

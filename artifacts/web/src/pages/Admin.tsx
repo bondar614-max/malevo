@@ -1902,6 +1902,7 @@ interface AiSettings {
   styles: string;
   photoshoot: string;
   review: string;
+  styleAssistModel: string;
   supportModel: string;
   supportInstructions: string;
   supportInstructionFileName: string;
@@ -1968,6 +1969,7 @@ function AiModelsTab() {
         setTextModels(supportTextModels);
         setSettings({
           ...settingsData,
+          styleAssistModel: settingsData.styleAssistModel ?? "openai/gpt-4o-mini",
           supportModel: settingsData.supportModel ?? "openai/gpt-4o-mini",
           supportInstructions: settingsData.supportInstructions ?? "",
           supportInstructionFileName: settingsData.supportInstructionFileName ?? "",
@@ -2151,6 +2153,25 @@ function AiModelsTab() {
               ))}
             </div>
           )}
+        </div>
+
+        <div className="bg-card border border-border rounded-xl p-5">
+          <div className="mb-4">
+            <div className="font-semibold text-white">Тексты AI-помощника стилей</div>
+            <div className="text-xs text-muted-foreground">
+              Эта модель заполняет название, описания, категорию и prompt в окне создания нового стиля.
+            </div>
+          </div>
+          <Field label="Модель OpenRouter/OpenAI для текстов">
+            <ModelSelect
+              models={textModels}
+              value={settings?.styleAssistModel ?? "openai/gpt-4o-mini"}
+              onChange={(v) => setSettings((s) => (s ? { ...s, styleAssistModel: v } : s))}
+            />
+          </Field>
+          <div className="mt-2 text-xs text-muted-foreground">
+            Превью-картинка стиля по-прежнему создаётся через KIE / Nano Banana Pro.
+          </div>
         </div>
 
         <div className="bg-card border border-border rounded-xl p-5">

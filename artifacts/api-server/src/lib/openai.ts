@@ -5,16 +5,25 @@ import { eq } from "drizzle-orm";
 
 let client: OpenAI | null = null;
 export const DEFAULT_SUPPORT_MODEL = "openai/gpt-4o-mini";
+export const DEFAULT_STYLE_ASSIST_MODEL = "openai/gpt-4o-mini";
 
 /** OpenRouter keys start with `sk-or-`; they require OpenRouter's base URL. */
 function isOpenRouterKey(key: string): boolean {
   return key.startsWith("sk-or-");
 }
 
-/** Model id to use for text generation, namespaced for OpenRouter when needed. */
-export async function assistModel(): Promise<string> {
-  const key = await getApiKey("openrouter");
-  return isOpenRouterKey(key) ? "openai/gpt-4o-mini" : "gpt-4o-mini";
+function modelForKey(model: string, key: string): string {
+  if (isOpenRouterKey(key)) return model;
+  return model.startsWith("openai/") ? model.slice("openai/".length) : model;
+}
+
+export async function styleAssistModel(): Promise<string> {
+  const [row] = await db
+    .select()
+    .from(appSettingsTable)
+    .where(eq(appSettingsTable.key, "style_assist:model"))
+    .limit(1);
+  return row?.value.trim() || DEFAULT_STYLE_ASSIST_MODEL;
 }
 
 export async function supportModel(): Promise<string> {
@@ -34,7 +43,7 @@ export interface TextModelOption {
 
 export interface OpenAIClientCandidate {
   client: OpenAI;
-  assistModel: string;
+  model: string;
   source: string;
 }
 
@@ -90,7 +99,7 @@ export async function getOpenAI(): Promise<OpenAI> {
   });
 }
 
-export async function getOpenAIClientCandidates(): Promise<OpenAIClientCandidate[]> {
+export async function getOpenAIClientCandidates(model = DEFAULT_STYLE_ASSIST_MODEL): Promise<OpenAIClientCandidate[]> {
   const keys = await getApiKeyCandidates("openrouter");
   if (keys.length === 0) throw new Error("OpenRouter/OpenAI API key is not configured");
   return keys.map((key) => ({
@@ -99,7 +108,7 @@ export async function getOpenAIClientCandidates(): Promise<OpenAIClientCandidate
       ...(isOpenRouterKey(key.value) ? { baseURL: "https://openrouter.ai/api/v1" } : {}),
       defaultHeaders: isOpenRouterKey(key.value) ? openRouterHeaders(key.value) : undefined,
     }),
-    assistModel: isOpenRouterKey(key.value) ? "openai/gpt-4o-mini" : "gpt-4o-mini",
+    model: modelForKey(model, key.value),
     source: `${key.source}:${key.name}`,
   }));
 }
