@@ -1,6 +1,6 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { randomUUID } from "node:crypto";
-import { db, usersTable, ordersTable, stylesTable, tariffsTable, servicesTable, locationsTable } from "@workspace/db";
+import { db, usersTable, ordersTable, stylesTable, tariffsTable, servicesTable, locationsTable, balancePaymentsTable } from "@workspace/db";
 import { eq, desc, sql } from "drizzle-orm";
 import { z } from "zod";
 import { hashPassword, requireAuth } from "../lib/auth";
@@ -25,6 +25,213 @@ async function requireAdmin(req: Request, res: Response, next: NextFunction): Pr
 }
 
 router.use(requireAuth, requireAdmin);
+
+type DashboardPeriod = "7d" | "30d" | "90d" | "year" | "all" | "custom";
+
+interface DashboardRange {
+  period: DashboardPeriod;
+  from: Date | null;
+  to: Date | null;
+}
+
+function startOfDay(d: Date): Date {
+  const out = new Date(d);
+  out.setHours(0, 0, 0, 0);
+  return out;
+}
+
+function endOfDay(d: Date): Date {
+  const out = new Date(d);
+  out.setHours(23, 59, 59, 999);
+  return out;
+}
+
+function parseDate(value: unknown): Date | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function parseDashboardRange(query: Request["query"]): DashboardRange {
+  const period = String(query.period ?? "30d") as DashboardPeriod;
+  const now = new Date();
+  if (period === "all") return { period: "all", from: null, to: null };
+  if (period === "custom") {
+    return {
+      period: "custom",
+      from: parseDate(query.from) ? startOfDay(parseDate(query.from)!) : null,
+      to: parseDate(query.to) ? endOfDay(parseDate(query.to)!) : endOfDay(now),
+    };
+  }
+  const days = period === "7d" ? 7 : period === "90d" ? 90 : period === "year" ? 365 : 30;
+  const from = startOfDay(new Date(now.getTime() - (days - 1) * 24 * 60 * 60 * 1000));
+  return { period: ["7d", "30d", "90d", "year"].includes(period) ? period : "30d", from, to: endOfDay(now) };
+}
+
+function dateWhere(column: unknown, range: DashboardRange) {
+  if (!range.from && !range.to) return sql`1=1`;
+  if (range.from && range.to) return sql`${column} >= ${range.from} and ${column} <= ${range.to}`;
+  if (range.from) return sql`${column} >= ${range.from}`;
+  return sql`${column} <= ${range.to}`;
+}
+
+function dateKey(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function eachDay(from: Date | null, to: Date | null): string[] {
+  if (!from || !to) return [];
+  const out: string[] = [];
+  const cursor = startOfDay(from);
+  const end = startOfDay(to);
+  while (cursor <= end && out.length < 370) {
+    out.push(dateKey(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return out;
+}
+
+// ---------- Dashboard ----------
+router.get("/admin/dashboard", async (req, res) => {
+  const range = parseDashboardRange(req.query);
+  const orderWhere = dateWhere(ordersTable.createdAt, range);
+  const userWhere = dateWhere(usersTable.createdAt, range);
+  const paymentWhere = dateWhere(balancePaymentsTable.creditedAt, range);
+
+  const [
+    usersTotalRows,
+    usersBalanceRows,
+    usersNewRows,
+    ordersSummaryRows,
+    paymentsSummaryRows,
+    statusRows,
+    topRows,
+    dailyOrdersRows,
+    dailyPaymentsRows,
+    recentRows,
+  ] = await Promise.all([
+    db.select({ value: sql<number>`count(*)` }).from(usersTable),
+    db.select({
+      balance: sql<number>`coalesce(sum(${usersTable.balance}),0)`,
+      totalSpent: sql<number>`coalesce(sum(${usersTable.totalSpent}),0)`,
+    }).from(usersTable),
+    db.select({ value: sql<number>`count(*)` }).from(usersTable).where(userWhere),
+    db.select({
+      total: sql<number>`count(*)`,
+      success: sql<number>`coalesce(sum(case when ${ordersTable.status} = 'success' then 1 else 0 end),0)`,
+      failed: sql<number>`coalesce(sum(case when ${ordersTable.status} = 'failed' then 1 else 0 end),0)`,
+      processing: sql<number>`coalesce(sum(case when ${ordersTable.status} = 'processing' then 1 else 0 end),0)`,
+      awaitingApproval: sql<number>`coalesce(sum(case when ${ordersTable.status} = 'awaiting_approval' then 1 else 0 end),0)`,
+      grossOrders: sql<number>`coalesce(sum(${ordersTable.amount}),0)`,
+      averageOrder: sql<number>`coalesce(avg(nullif(${ordersTable.amount},0)),0)`,
+    }).from(ordersTable).where(orderWhere),
+    db.select({
+      count: sql<number>`count(*)`,
+      revenue: sql<number>`coalesce(sum(${balancePaymentsTable.amount}),0)`,
+      averagePayment: sql<number>`coalesce(avg(${balancePaymentsTable.amount}),0)`,
+    }).from(balancePaymentsTable).where(sql`${paymentWhere} and ${balancePaymentsTable.status} = 'succeeded'`),
+    db.select({
+      status: ordersTable.status,
+      count: sql<number>`count(*)`,
+    }).from(ordersTable).where(orderWhere).groupBy(ordersTable.status),
+    db.select({
+      key: sql<string>`coalesce(${ordersTable.serviceKey}, ${ordersTable.styleId}, 'unknown')`,
+      label: sql<string>`coalesce(${servicesTable.title}, ${stylesTable.title}, 'Без категории')`,
+      count: sql<number>`count(*)`,
+      revenue: sql<number>`coalesce(sum(${ordersTable.amount}),0)`,
+      success: sql<number>`coalesce(sum(case when ${ordersTable.status} = 'success' then 1 else 0 end),0)`,
+    })
+      .from(ordersTable)
+      .leftJoin(servicesTable, eq(servicesTable.key, ordersTable.serviceKey))
+      .leftJoin(stylesTable, eq(stylesTable.id, ordersTable.styleId))
+      .where(orderWhere)
+      .groupBy(sql`coalesce(${ordersTable.serviceKey}, ${ordersTable.styleId}, 'unknown')`, sql`coalesce(${servicesTable.title}, ${stylesTable.title}, 'Без категории')`)
+      .orderBy(sql`count(*) desc`)
+      .limit(8),
+    db.select({
+      day: sql<string>`date(${ordersTable.createdAt})`,
+      orders: sql<number>`count(*)`,
+      revenue: sql<number>`coalesce(sum(${ordersTable.amount}),0)`,
+      success: sql<number>`coalesce(sum(case when ${ordersTable.status} = 'success' then 1 else 0 end),0)`,
+    }).from(ordersTable).where(orderWhere).groupBy(sql`date(${ordersTable.createdAt})`).orderBy(sql`date(${ordersTable.createdAt}) asc`),
+    db.select({
+      day: sql<string>`date(${balancePaymentsTable.creditedAt})`,
+      revenue: sql<number>`coalesce(sum(${balancePaymentsTable.amount}),0)`,
+    })
+      .from(balancePaymentsTable)
+      .where(sql`${paymentWhere} and ${balancePaymentsTable.status} = 'succeeded'`)
+      .groupBy(sql`date(${balancePaymentsTable.creditedAt})`)
+      .orderBy(sql`date(${balancePaymentsTable.creditedAt}) asc`),
+    db.select({
+      id: ordersTable.id,
+      userEmail: usersTable.email,
+      label: sql<string>`coalesce(${servicesTable.title}, ${stylesTable.title}, 'Генерация')`,
+      status: ordersTable.status,
+      amount: ordersTable.amount,
+      createdAt: ordersTable.createdAt,
+    })
+      .from(ordersTable)
+      .leftJoin(usersTable, eq(usersTable.id, ordersTable.userId))
+      .leftJoin(servicesTable, eq(servicesTable.key, ordersTable.serviceKey))
+      .leftJoin(stylesTable, eq(stylesTable.id, ordersTable.styleId))
+      .where(orderWhere)
+      .orderBy(desc(ordersTable.createdAt))
+      .limit(8),
+  ]);
+
+  const orderDaily = new Map(dailyOrdersRows.map((r) => [String(r.day), r]));
+  const paymentDaily = new Map(dailyPaymentsRows.map((r) => [String(r.day), r]));
+  const days = range.period === "all"
+    ? Array.from(new Set([...orderDaily.keys(), ...paymentDaily.keys()])).sort()
+    : eachDay(range.from, range.to);
+
+  res.json({
+    period: {
+      key: range.period,
+      from: range.from ? range.from.toISOString() : null,
+      to: range.to ? range.to.toISOString() : null,
+    },
+    summary: {
+      usersTotal: Number(usersTotalRows[0]?.value ?? 0),
+      usersNew: Number(usersNewRows[0]?.value ?? 0),
+      usersBalance: Number(usersBalanceRows[0]?.balance ?? 0),
+      usersTotalSpent: Number(usersBalanceRows[0]?.totalSpent ?? 0),
+      ordersTotal: Number(ordersSummaryRows[0]?.total ?? 0),
+      ordersSuccess: Number(ordersSummaryRows[0]?.success ?? 0),
+      ordersFailed: Number(ordersSummaryRows[0]?.failed ?? 0),
+      ordersProcessing: Number(ordersSummaryRows[0]?.processing ?? 0),
+      ordersAwaitingApproval: Number(ordersSummaryRows[0]?.awaitingApproval ?? 0),
+      grossOrders: Number(ordersSummaryRows[0]?.grossOrders ?? 0),
+      averageOrder: Number(ordersSummaryRows[0]?.averageOrder ?? 0),
+      paymentsCount: Number(paymentsSummaryRows[0]?.count ?? 0),
+      paymentsRevenue: Number(paymentsSummaryRows[0]?.revenue ?? 0),
+      averagePayment: Number(paymentsSummaryRows[0]?.averagePayment ?? 0),
+    },
+    statuses: statusRows.map((r) => ({ status: r.status, count: Number(r.count) })),
+    topItems: topRows.map((r) => ({
+      key: r.key,
+      label: r.label,
+      count: Number(r.count),
+      revenue: Number(r.revenue),
+      success: Number(r.success),
+    })),
+    daily: days.map((day) => ({
+      day,
+      orders: Number(orderDaily.get(day)?.orders ?? 0),
+      success: Number(orderDaily.get(day)?.success ?? 0),
+      grossOrders: Number(orderDaily.get(day)?.revenue ?? 0),
+      paymentsRevenue: Number(paymentDaily.get(day)?.revenue ?? 0),
+    })),
+    recentOrders: recentRows.map((o) => ({
+      id: o.id,
+      userEmail: o.userEmail ?? "",
+      label: o.label,
+      status: o.status,
+      amount: Number(o.amount),
+      createdAt: o.createdAt.toISOString(),
+    })),
+  });
+});
 
 // ---------- Users ----------
 router.get("/admin/users", async (_req, res) => {
